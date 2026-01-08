@@ -34,6 +34,52 @@ const { session_init, rk32 } = x3dhInitiatorV1({
 });
 ```
 
+## Public API
+
+### Wire Format Types
+- `X3DHPrekeyBundleV1`, `X3DHSessionInitV1` - X3DH message structures
+- `HeaderProtoV1`, `ArchiveHeaderV1`, `DoubleRatchetHeader` - Message header types
+- `MessagePayloadV1` - Payload structure
+- `UUID`, `Base64String` - Primitive type aliases
+
+### Wire Format Validators
+- `assertX3DHPrekeyBundleV1`, `assertX3DHSessionInitV1` - X3DH validators
+- `assertHeaderProtoV1`, `assertArchiveHeaderV1` - Header validators
+
+### Cryptographic Functions
+- **X3DH**: `x3dhInitiatorV1`, `x3dhResponderV1`
+- **AEAD**: `aeadEncryptXChaCha20Poly1305`, `aeadDecryptXChaCha20Poly1305`, `randomNonce24`, `assertKeyNonceLengths`
+- **Key Agreement**: `generateX25519Keypair`, `x25519SharedSecret`
+- **Signing**: `generateEd25519Keypair`, `ed25519Sign`, `ed25519Verify`
+- **KDF**: `hkdfSha256`, `kdfRootAndChainKey`, `kdfChainKey`
+- **High-level**: `sealDeliveryV1`, `openDeliveryV1`, `sealArchiveV1`, `openArchiveV1`
+- **Utilities**: `encodeAADFromHeaderV1`, `decodeNonceFromHeaderV1`, `decodeDhPubFromHeaderV1`
+
+### Encoding Utilities
+- `bytesToBase64`, `base64ToBytes`
+
+## Wire vs Crypto Validation
+
+This library separates validation concerns into two layers:
+
+**Wire Layer** (`src/wire/`)
+- Validates object shape and field types
+- Checks that required fields are present and have correct primitive types
+- Does NOT validate base64 encoding or decoded byte lengths
+- Does NOT perform cryptographic operations
+
+**Crypto Layer** (`src/crypto/`)
+- Decodes base64 strings with error handling
+- Enforces exact byte lengths (X25519 pub: 32B, Ed25519 pub: 32B, Ed25519 sig: 64B)
+- Verifies cryptographic signatures (e.g., SPK signature in X3DH)
+- Performs key agreement (DH) and key derivation (HKDF)
+
+**Usage Pattern:**
+1. First validate wire format structure: `assertX3DHPrekeyBundleV1(bundle)`
+2. Then pass to crypto functions which enforce crypto invariants: `x3dhInitiatorV1(...)`
+
+This separation allows wire format validation without crypto dependencies and ensures crypto operations always receive structurally valid input.
+
 ## Development
 
 ```bash

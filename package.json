@@ -4,14 +4,35 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "NOTICE",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepack": "npm run build && npm test"
   },
-  "keywords": [],
+  "keywords": [
+    "crypto",
+    "x3dh",
+    "e2ee",
+    "encryption",
+    "x25519",
+    "ed25519",
+    "xchacha20poly1305"
+  ],
   "author": "",
   "license": "Apache-2.0",
-  "description": "",
+  "description": "TypeScript cryptographic library for end-to-end encrypted messaging with X3DH key agreement",
   "dependencies": {
     "@noble/ciphers": "^2.1.1",
     "@noble/curves": "^2.0.1",

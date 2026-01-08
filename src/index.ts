@@ -66,5 +66,5 @@ export { kdfRootAndChainKey, kdfChainKey } from "./crypto/kdf.js";
 export { generateEd25519Keypair, ed25519Sign, ed25519Verify } from "./crypto/ed25519.js";
 
 // X3DH crypto
-export { decodeX25519PubB64, x3dhInitiatorV1, x3dhResponderV1 } from "./crypto/x3dh.js";
+export { x3dhInitiatorV1, x3dhResponderV1 } from "./crypto/x3dh.js";
 
