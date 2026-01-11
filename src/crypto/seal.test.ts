@@ -9,6 +9,7 @@ import { randomNonce24 } from "./aead.js";
 import { randomBytes } from "@noble/ciphers/utils.js";
 import { bytesToBase64 } from "../encoding/base64.js";
 import type { HeaderProtoV1, ArchiveHeaderV1 } from "../wire/header.js";
+import { MAX_PLAINTEXT_BYTES, MAX_CIPHERTEXT_BYTES } from "./limits.js";
 
 test("delivery roundtrip returns original plaintext", () => {
   const key = randomBytes(32);
@@ -266,4 +267,51 @@ test("invalid base64 for ciphertext_b64 throws TypeError", () => {
       ciphertext_b64: "short",
     })
   ).toThrow();
+});
+
+test("plaintext limit is enforced", () => {
+  const key = randomBytes(32);
+  const nonce = randomNonce24();
+  const dhPub = randomBytes(32);
+  const header: HeaderProtoV1 = {
+    v: 1,
+    alg: "xchacha20poly1305",
+    nonce_b64: bytesToBase64(nonce),
+    sender_device_id: "sender-uuid",
+    recipient_device_id: "recipient-uuid",
+    dr: {
+      dh_pub_b64: bytesToBase64(dhPub),
+      pn: 0,
+      n: 1,
+    },
+  };
+
+  const tooLarge = new Uint8Array(MAX_PLAINTEXT_BYTES + 1);
+  expect(() => sealDeliveryV1({ key32: key, header, plaintext: tooLarge })).toThrow(
+    /Plaintext too large/
+  );
+});
+
+test("ciphertext limit is enforced", () => {
+  const key = randomBytes(32);
+  const nonce = randomNonce24();
+  const dhPub = randomBytes(32);
+  const header: HeaderProtoV1 = {
+    v: 1,
+    alg: "xchacha20poly1305",
+    nonce_b64: bytesToBase64(nonce),
+    sender_device_id: "sender-uuid",
+    recipient_device_id: "recipient-uuid",
+    dr: {
+      dh_pub_b64: bytesToBase64(dhPub),
+      pn: 0,
+      n: 1,
+    },
+  };
+
+  const tooLarge = new Uint8Array(MAX_CIPHERTEXT_BYTES + 1);
+  const tooLargeB64 = bytesToBase64(tooLarge);
+  expect(() =>
+    openDeliveryV1({ key32: key, header, ciphertext_b64: tooLargeB64 })
+  ).toThrow(/Ciphertext too large/);
 });

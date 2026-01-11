@@ -1,0 +1,130 @@
+import { describe, it, expect } from "vitest";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+import { FileRatchetStore } from "./file-store.js";
+import { ratchetInit, ratchetEncrypt, ratchetDecrypt } from "./ratchet.js";
+import { createPersistedSession } from "./session-store.js";
+import { generateX25519Keypair } from "../crypto/x25519.js";
+import { randomBytes } from "@noble/ciphers/utils.js";
+
+function encode(str: string): Uint8Array {
+  return new TextEncoder().encode(str);
+}
+
+describe("FileRatchetStore", () => {
+  it("writes and reads session with atomic replace and prevents replay", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ratchet-store-"));
+    try {
+      const store = new FileRatchetStore(dir);
+
+      const root = randomBytes(32);
+      const aliceDh = generateX25519Keypair();
+      const bobDh = generateX25519Keypair();
+
+      const aliceState = ratchetInit({
+        rk32: root,
+        selfDh: aliceDh,
+        remoteDhPub32: bobDh.pub32,
+        sendingFirst: true,
+      });
+      const bobState = ratchetInit({
+        rk32: root,
+        selfDh: bobDh,
+        remoteDhPub32: aliceDh.pub32,
+        sendingFirst: false,
+      });
+
+      store.save("alice->bob", createPersistedSession(aliceState));
+      store.save("bob->alice", createPersistedSession(bobState));
+
+      const { header, ciphertext_b64 } = ratchetEncrypt({
+        state: aliceState,
+        plaintext: encode("hi"),
+        sender_device_id: "alice",
+        recipient_device_id: "bob",
+      });
+      store.save("alice->bob", { version: 1, state: aliceState });
+
+      const loadedBob = store.load("bob->alice")!;
+      const decrypted = ratchetDecrypt({
+        state: loadedBob.state,
+        header,
+        ciphertext_b64,
+      });
+      store.save("bob->alice", { version: loadedBob.version + 1, state: loadedBob.state });
+
+      expect(decrypted.plaintext).toEqual(encode("hi"));
+
+      // Replay should fail
+      expect(() =>
+        ratchetDecrypt({
+          state: loadedBob.state,
+          header,
+          ciphertext_b64,
+        })
+      ).toThrow();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("detects simple rollback via version counter", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ratchet-store-"));
+    try {
+      const store = new FileRatchetStore(dir);
+      const root = randomBytes(32);
+      const aliceDh = generateX25519Keypair();
+      const bobDh = generateX25519Keypair();
+
+      const state = ratchetInit({
+        rk32: root,
+        selfDh: aliceDh,
+        remoteDhPub32: bobDh.pub32,
+        sendingFirst: true,
+      });
+
+      // Save version 2
+      store.save("sess", { version: 2, state: createPersistedSession(state).state });
+
+      // Attempt to save older version should fail
+      expect(() =>
+        store.save("sess", { version: 1, state: createPersistedSession(state).state })
+      ).toThrow(/stale session version/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("detects tampering when MAC is enabled", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ratchet-store-"));
+    try {
+      const macKey32 = randomBytes(32);
+      const store = new FileRatchetStore(dir, { macKey32 });
+
+      const root = randomBytes(32);
+      const aliceDh = generateX25519Keypair();
+      const bobDh = generateX25519Keypair();
+
+      const state = ratchetInit({
+        rk32: root,
+        selfDh: aliceDh,
+        remoteDhPub32: bobDh.pub32,
+        sendingFirst: true,
+      });
+
+      store.save("sess", createPersistedSession(state));
+
+      // Tamper with the payload on disk
+      const p = join(dir, "sess.json");
+      const raw = readFileSync(p, "utf-8");
+      const parsed = JSON.parse(raw);
+      parsed.payload.version = 999;
+      writeFileSync(p, JSON.stringify(parsed), "utf-8");
+
+      expect(() => store.load("sess")).toThrow(/MAC verification failed/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

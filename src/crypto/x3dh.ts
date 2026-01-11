@@ -9,21 +9,18 @@
  */
 
 import { x25519 } from "@noble/curves/ed25519.js";
-import { base64ToBytes, bytesToBase64 } from "../encoding/base64.js";
+import { bytesToBase64, decodeStrictBase64 } from "../encoding/base64.js";
 import { generateX25519Keypair, x25519SharedSecret } from "./x25519.js";
 import { hkdfSha256 } from "./hkdf.js";
 import { ed25519Verify } from "./ed25519.js";
 import type { X3DHPrekeyBundleV1, X3DHSessionInitV1 } from "../wire/x3dh.js";
+import { Encoder } from "cbor-x";
 
 const ENC = new TextEncoder();
+const CBOR_ENCODER = new Encoder({ mapsAsObjects: false, useRecords: false });
 
 export function decodeX25519PubB64(pub_b64: string, fieldName: string): Uint8Array {
-  let decoded: Uint8Array;
-  try {
-    decoded = base64ToBytes(pub_b64);
-  } catch {
-    throw new TypeError(`Invalid ${fieldName}: not valid base64`);
-  }
+  const decoded = decodeStrictBase64(fieldName, pub_b64);
   if (decoded.byteLength !== 32) {
     throw new TypeError(`Invalid ${fieldName} length: expected 32 bytes, got ${decoded.byteLength}`);
   }
@@ -31,12 +28,7 @@ export function decodeX25519PubB64(pub_b64: string, fieldName: string): Uint8Arr
 }
 
 function decodeEd25519PubB64(pub_b64: string, fieldName: string): Uint8Array {
-  let decoded: Uint8Array;
-  try {
-    decoded = base64ToBytes(pub_b64);
-  } catch {
-    throw new TypeError(`Invalid ${fieldName}: not valid base64`);
-  }
+  const decoded = decodeStrictBase64(fieldName, pub_b64);
   if (decoded.byteLength !== 32) {
     throw new TypeError(`Invalid ${fieldName} length: expected 32 bytes, got ${decoded.byteLength}`);
   }
@@ -44,12 +36,7 @@ function decodeEd25519PubB64(pub_b64: string, fieldName: string): Uint8Array {
 }
 
 function decodeEd25519SigB64(sig_b64: string, fieldName: string): Uint8Array {
-  let decoded: Uint8Array;
-  try {
-    decoded = base64ToBytes(sig_b64);
-  } catch {
-    throw new TypeError(`Invalid ${fieldName}: not valid base64`);
-  }
+  const decoded = decodeStrictBase64(fieldName, sig_b64);
   if (decoded.byteLength !== 64) {
     throw new TypeError(`Invalid ${fieldName} length: expected 64 bytes, got ${decoded.byteLength}`);
   }
@@ -66,28 +53,20 @@ function decodeEd25519SigB64(sig_b64: string, fieldName: string): Uint8Array {
  * - SPK public key
  * - SPK identifier (binds the key lookup handle)
  */
-function buildSpkSigMessage(args: {
+export function buildSpkSigMessage(args: {
   recipient_device_id: string;
   ik_pub32: Uint8Array;
   spk_pub32: Uint8Array;
   spk_id: number | string;
 }): Uint8Array {
-  const domain = ENC.encode("moretag/x3dh/spk/v1");
-  const dev = ENC.encode(args.recipient_device_id);
-  const spkId = ENC.encode(String(args.spk_id));
-
-  const out = new Uint8Array(
-    domain.length + dev.length + args.ik_pub32.length + args.spk_pub32.length + spkId.length
-  );
-
-  let off = 0;
-  out.set(domain, off); off += domain.length;
-  out.set(dev, off); off += dev.length;
-  out.set(args.ik_pub32, off); off += args.ik_pub32.length;
-  out.set(args.spk_pub32, off); off += args.spk_pub32.length;
-  out.set(spkId, off);
-
-  return out;
+  // CBOR array provides unambiguous framing; string/number ids stay distinct.
+  return CBOR_ENCODER.encode([
+    "moretag/x3dh/spk/v1",
+    args.recipient_device_id,
+    args.ik_pub32,
+    args.spk_pub32,
+    args.spk_id,
+  ]);
 }
 
 export function x3dhInitiatorV1(args: {
@@ -97,6 +76,13 @@ export function x3dhInitiatorV1(args: {
   initiator_ek_priv32?: Uint8Array;
 }): { session_init: X3DHSessionInitV1; rk32: Uint8Array } {
   const { sender_device_id, recipient_bundle, initiator_ik_priv32 } = args;
+
+  if (recipient_bundle.v !== 1) {
+    throw new TypeError("Unsupported X3DHPrekeyBundleV1 version");
+  }
+  if (recipient_bundle.alg !== "x3dh-x25519-hkdf-sha256+ed25519") {
+    throw new TypeError("Unsupported X3DHPrekeyBundleV1.alg");
+  }
 
   if (initiator_ik_priv32.byteLength !== 32) {
     throw new TypeError(
@@ -204,6 +190,13 @@ export function x3dhResponderV1(args: {
     recipient_spk_priv32,
     recipient_opk_priv32,
   } = args;
+
+  if (session_init.v !== 1) {
+    throw new TypeError("Unsupported X3DHSessionInitV1 version");
+  }
+  if (session_init.alg !== "x3dh-x25519-hkdf-sha256+ed25519") {
+    throw new TypeError("Unsupported X3DHSessionInitV1.alg");
+  }
 
   if (recipient_ik_priv32.byteLength !== 32) {
     throw new TypeError(

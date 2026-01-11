@@ -11,8 +11,27 @@ const encoder = new Encoder({
   useRecords: false,
 });
 
+const ENC = new TextEncoder();
+
+function compareCanonicalKeys(a: string, b: string): number {
+  const aBytes = ENC.encode(a);
+  const bBytes = ENC.encode(b);
+
+  if (aBytes.length !== bBytes.length) {
+    return aBytes.length - bBytes.length;
+  }
+
+  const len = Math.min(aBytes.length, bBytes.length);
+  for (let i = 0; i < len; i++) {
+    const diff = (aBytes[i] ?? 0) - (bBytes[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
 /**
- * Recursively canonicalizes an object by sorting keys lexicographically.
+ * Recursively canonicalizes an object by sorting keys using CBOR canonical order
+ * (shorter UTF-8 first, then bytewise lexicographic).
  * Only sorts keys for plain objects (Object.prototype or null prototype).
  * Non-plain objects (Uint8Array, Date, class instances) are preserved as-is.
  * Arrays and primitives are preserved (arrays have their elements canonicalized).
@@ -37,7 +56,8 @@ function canonicalize(x: unknown): unknown {
     // Plain object: sort keys lexicographically
     const obj = x as Record<string, unknown>;
     const out: Record<string, unknown> = {};
-    for (const k of Object.keys(obj).sort()) {
+    const sortedKeys = Object.keys(obj).sort(compareCanonicalKeys);
+    for (const k of sortedKeys) {
       out[k] = canonicalize(obj[k]);
     }
     return out;

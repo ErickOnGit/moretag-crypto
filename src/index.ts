@@ -68,3 +68,30 @@ export { generateEd25519Keypair, ed25519Sign, ed25519Verify } from "./crypto/ed2
 // X3DH crypto
 export { x3dhInitiatorV1, x3dhResponderV1 } from "./crypto/x3dh.js";
 
+// Double Ratchet (MVP)
+export {
+  ratchetInit,
+  ratchetEncrypt,
+  ratchetDecrypt,
+  type RatchetState,
+} from "./ratchet/ratchet.js";
+export {
+  InMemoryRatchetStore,
+  ratchetEncryptWithStore,
+  ratchetDecryptWithStore,
+  type RatchetSessionStore,
+  type PersistedSession,
+  createPersistedSession,
+} from "./ratchet/session-store.js";
+export { FileRatchetStore } from "./ratchet/file-store.js";
+
+// Identity trust helpers
+export {
+  IdentityRegistry,
+  type IdentityRecord,
+  type TrustResult,
+} from "./identity/trust.js";
+
+// X3DH prekey lifecycle helpers
+export { X3DHPrekeyManagerV1, type SignedPrekeyRecord, type OneTimePrekeyRecord } from "./x3dh/prekey-manager.js";
+export { x3dhInitiatorWithTrustV1, x3dhResponderWithPrekeysV1 } from "./x3dh/session.js";

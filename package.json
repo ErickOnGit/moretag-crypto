@@ -20,6 +20,8 @@
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "verify": "npm run typecheck && npm test && npm run build",
     "prepack": "npm run build && npm test"
   },
   "keywords": [

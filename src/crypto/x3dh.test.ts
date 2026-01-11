@@ -9,6 +9,7 @@ import type {
 } from "../wire/x3dh.js";
 import {
   decodeX25519PubB64,
+  buildSpkSigMessage,
   x3dhInitiatorV1,
   x3dhResponderV1,
 } from "./x3dh.js";
@@ -29,21 +30,12 @@ describe("X3DH v1", () => {
   }): X3DHPrekeyBundleV1 {
     const { recipient_device_id, recipient_ik, recipient_spk, recipient_ik_sig, spk_id, opk, opk_id } = args;
 
-    // Build signature message: "moretag/x3dh/spk/v1" || device_id || ik_pub || spk_pub || spk_id
-    const ENC = new TextEncoder();
-    const domain = ENC.encode("moretag/x3dh/spk/v1");
-    const dev = ENC.encode(recipient_device_id);
-    const spkIdBytes = ENC.encode(String(spk_id));
-    
-    const sigMsg = new Uint8Array(
-      domain.length + dev.length + recipient_ik.pub32.length + recipient_spk.pub32.length + spkIdBytes.length
-    );
-    let off = 0;
-    sigMsg.set(domain, off); off += domain.length;
-    sigMsg.set(dev, off); off += dev.length;
-    sigMsg.set(recipient_ik.pub32, off); off += recipient_ik.pub32.length;
-    sigMsg.set(recipient_spk.pub32, off); off += recipient_spk.pub32.length;
-    sigMsg.set(spkIdBytes, off);
+    const sigMsg = buildSpkSigMessage({
+      recipient_device_id,
+      ik_pub32: recipient_ik.pub32,
+      spk_pub32: recipient_spk.pub32,
+      spk_id,
+    });
 
     const spk_sig = ed25519Sign(recipient_ik_sig.priv32, sigMsg);
 
@@ -254,20 +246,12 @@ describe("X3DH v1", () => {
       const wrongSigKey = generateEd25519Keypair();
 
       // Build correct message but sign with wrong key
-      const ENC = new TextEncoder();
-      const domain = ENC.encode("moretag/x3dh/spk/v1");
-      const dev = ENC.encode("bob-device-1");
-      const spkIdBytes = ENC.encode("100");
-      
-      const sigMsg = new Uint8Array(
-        domain.length + dev.length + recipient_ik.pub32.length + recipient_spk.pub32.length + spkIdBytes.length
-      );
-      let off = 0;
-      sigMsg.set(domain, off); off += domain.length;
-      sigMsg.set(dev, off); off += dev.length;
-      sigMsg.set(recipient_ik.pub32, off); off += recipient_ik.pub32.length;
-      sigMsg.set(recipient_spk.pub32, off); off += recipient_spk.pub32.length;
-      sigMsg.set(spkIdBytes, off);
+      const sigMsg = buildSpkSigMessage({
+        recipient_device_id: "bob-device-1",
+        ik_pub32: recipient_ik.pub32,
+        spk_pub32: recipient_spk.pub32,
+        spk_id: 100,
+      });
 
       const wrongSig = ed25519Sign(wrongSigKey.priv32, sigMsg);
 

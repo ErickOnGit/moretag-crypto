@@ -1,0 +1,15 @@
+{
+  "header": {
+    "v": 1,
+    "alg": "xchacha20poly1305",
+    "nonce_b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYX",
+    "sender_device_id": "sender-device-1",
+    "recipient_device_id": "recipient-device-1",
+    "dr": {
+      "dh_pub_b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+      "pn": 0,
+      "n": 5
+    }
+  },
+  "aad_b64": "uQAGYXYBYmRyuQADYW4FYnBuAGpkaF9wdWJfYjY0eCxBQUVDQXdRRkJnY0lDUW9MREEwT0R4QVJFaE1VRlJZWEdCa2FHeHdkSGg4PWNhbGdxeGNoYWNoYTIwcG9seTEzMDVpbm9uY2VfYjY0eCBBQUVDQXdRRkJnY0lDUW9MREEwT0R4QVJFaE1VRlJZWHBzZW5kZXJfZGV2aWNlX2lkb3NlbmRlci1kZXZpY2UtMXNyZWNpcGllbnRfZGV2aWNlX2lkcnJlY2lwaWVudC1kZXZpY2UtMQ=="
+}

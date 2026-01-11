@@ -1,12 +1,12 @@
-name: CI
+name: Security
 
 on:
-  push:
-    branches: [main]
-  pull_request:
+  schedule:
+    - cron: "0 12 * * 1" # weekly
+  workflow_dispatch:
 
 jobs:
-  test:
+  npm-audit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,7 +15,4 @@ jobs:
           node-version: "20"
           cache: "npm"
       - run: npm ci
-      - run: npm run typecheck
-      - run: npm test
-      - run: npm run build
-      - run: npm pack --dry-run
+      - run: npm audit --audit-level=high

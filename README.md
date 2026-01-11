@@ -48,6 +48,7 @@ const { session_init, rk32 } = x3dhInitiatorV1({
 
 ### Cryptographic Functions
 - **X3DH**: `x3dhInitiatorV1`, `x3dhResponderV1`
+- **X3DH Lifecycle**: `X3DHPrekeyManagerV1`, `x3dhInitiatorWithTrustV1`, `x3dhResponderWithPrekeysV1`
 - **AEAD**: `aeadEncryptXChaCha20Poly1305`, `aeadDecryptXChaCha20Poly1305`, `randomNonce24`, `assertKeyNonceLengths`
 - **Key Agreement**: `generateX25519Keypair`, `x25519SharedSecret`
 - **Signing**: `generateEd25519Keypair`, `ed25519Sign`, `ed25519Verify`
@@ -92,6 +93,16 @@ npm test
 # Build
 npm run build
 ```
+
+## Operational Guidance (v1)
+
+- **Input validation**: All crypto entrypoints enforce strict base64, version/alg, and length limits by default.
+- **Size limits**: Plaintext limited to ~1MB, ciphertext slightly above; ratchet skipped-key cache bounded (2k) with derivation window (1k).
+- **Storage**: Use the provided session store interfaces. `FileRatchetStore` writes atomically and tracks a monotonic version counter to detect simple rollbacks. For production, back with durable storage and consider hardware-backed key protection.
+- **Storage integrity**: `FileRatchetStore` can optionally MAC persisted sessions (`macKey32`) to detect on-disk tampering. This does not prevent full rollback if an attacker can restore *both* the session and counter files; use an OS/DB mechanism with rollback resistance for that threat model.
+- **Identity**: TOFU-style identity pinning with optional rotation (`IdentityRegistry`). Reject mismatches unless explicitly rotating.
+- **Interop**: Deterministic vectors live under `vectors/` for AAD and SPK signature message framing.
+- **Spec**: Stable v1 wire/state spec is in `docs/SPEC.md`. v1.x commits to backward compatibility with these formats and invariants.
 
 ## Security
 

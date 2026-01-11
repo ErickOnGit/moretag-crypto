@@ -13,8 +13,8 @@ import {
   decodeNonceFromHeaderV1,
   decodeDhPubFromHeaderV1,
 } from "./header-utils.js";
-import { bytesToBase64, base64ToBytes } from "../encoding/base64.js";
-import { decodeStrictBase64 } from "./header-utils.js";
+import { bytesToBase64, decodeStrictBase64 } from "../encoding/base64.js";
+import { MAX_PLAINTEXT_BYTES, MAX_CIPHERTEXT_BYTES } from "./limits.js";
 
 /**
  * Seals (encrypts) a delivery message using HeaderProtoV1.
@@ -31,6 +31,12 @@ export function sealDeliveryV1(args: {
   plaintext: Uint8Array;
 }): { ciphertext_b64: string } {
   const { key32, header, plaintext } = args;
+
+  if (plaintext.byteLength > MAX_PLAINTEXT_BYTES) {
+    throw new TypeError(
+      `Plaintext too large: max ${MAX_PLAINTEXT_BYTES} bytes`
+    );
+  }
 
   // Compute AAD from header
   const aadBytes = encodeAADFromHeaderV1(header);
@@ -80,11 +86,11 @@ export function openDeliveryV1(args: {
   decodeDhPubFromHeaderV1(header);
 
   // Decode ciphertext from base64
-  let ciphertextBytes: Uint8Array;
-  try {
-    ciphertextBytes = base64ToBytes(ciphertext_b64);
-  } catch {
-    throw new TypeError("Invalid ciphertext_b64: not valid base64");
+  const ciphertextBytes = decodeStrictBase64("ciphertext_b64", ciphertext_b64);
+  if (ciphertextBytes.byteLength > MAX_CIPHERTEXT_BYTES) {
+    throw new TypeError(
+      `Ciphertext too large: max ${MAX_CIPHERTEXT_BYTES} bytes`
+    );
   }
 
   // Decrypt
@@ -111,6 +117,12 @@ export function sealArchiveV1(args: {
   plaintext: Uint8Array;
 }): { ciphertext_b64: string } {
   const { key32, header, plaintext } = args;
+
+  if (plaintext.byteLength > MAX_PLAINTEXT_BYTES) {
+    throw new TypeError(
+      `Plaintext too large: max ${MAX_PLAINTEXT_BYTES} bytes`
+    );
+  }
 
   // Compute AAD from header
   const aadBytes = encodeAADFromHeaderV1(header);
@@ -159,7 +171,12 @@ export function openArchiveV1(args: {
   decodeDhPubFromHeaderV1(header);
 
   // Decode ciphertext from base64
-const ciphertextBytes = decodeStrictBase64("ciphertext_b64", ciphertext_b64);
+  const ciphertextBytes = decodeStrictBase64("ciphertext_b64", ciphertext_b64);
+  if (ciphertextBytes.byteLength > MAX_CIPHERTEXT_BYTES) {
+    throw new TypeError(
+      `Ciphertext too large: max ${MAX_CIPHERTEXT_BYTES} bytes`
+    );
+  }
 
   // Decrypt
   return aeadDecryptXChaCha20Poly1305(
