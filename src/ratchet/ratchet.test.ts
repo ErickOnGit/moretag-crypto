@@ -216,4 +216,48 @@ describe("Double Ratchet MVP", () => {
     });
     expect(dec.plaintext).toEqual(encode("ok"));
   });
+
+  it("rejects non-integer or negative counters in headers", () => {
+    const root = randomBytes(32);
+    const aliceDh = generateX25519Keypair();
+    const bobDh = generateX25519Keypair();
+
+    const bobState = ratchetInit({
+      rk32: root,
+      selfDh: bobDh,
+      remoteDhPub32: aliceDh.pub32,
+      sendingFirst: false,
+    });
+
+    const baseHeader = {
+      v: 1,
+      alg: "xchacha20poly1305",
+      nonce_b64: bytesToBase64(randomBytes(24)),
+      sender_device_id: "alice-device",
+      recipient_device_id: "bob-device",
+      dr: {
+        dh_pub_b64: bytesToBase64(aliceDh.pub32),
+        pn: 0,
+        n: 0,
+      },
+    } as const;
+
+    const ciphertext_b64 = bytesToBase64(new Uint8Array(32));
+
+    expect(() =>
+      ratchetDecrypt({
+        state: bobState,
+        header: { ...baseHeader, dr: { ...baseHeader.dr, pn: -1 } },
+        ciphertext_b64,
+      })
+    ).toThrow(/non-negative integer/);
+
+    expect(() =>
+      ratchetDecrypt({
+        state: bobState,
+        header: { ...baseHeader, dr: { ...baseHeader.dr, n: 1.5 } },
+        ciphertext_b64,
+      })
+    ).toThrow(/non-negative integer/);
+  });
 });

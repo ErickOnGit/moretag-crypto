@@ -53,6 +53,12 @@ export interface ArchiveHeaderV1 {
   dr: DoubleRatchetHeader;
 }
 
+function assertNonNegativeInteger(label: string, value: unknown): void {
+  if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value) || value < 0) {
+    throw new TypeError(`${label} must be a non-negative integer`);
+  }
+}
+
 /**
  * Runtime validator for HeaderProtoV1.
  * Throws TypeError if validation fails.
@@ -104,13 +110,8 @@ export function assertHeaderProtoV1(x: unknown): asserts x is HeaderProtoV1 {
     throw new TypeError("HeaderProtoV1.dr.dh_pub_b64 must be a non-empty string");
   }
 
-  if (typeof dr.pn !== "number" || !Number.isFinite(dr.pn)) {
-    throw new TypeError("HeaderProtoV1.dr.pn must be a finite number");
-  }
-
-  if (typeof dr.n !== "number" || !Number.isFinite(dr.n)) {
-    throw new TypeError("HeaderProtoV1.dr.n must be a finite number");
-  }
+  assertNonNegativeInteger("HeaderProtoV1.dr.pn", dr.pn);
+  assertNonNegativeInteger("HeaderProtoV1.dr.n", dr.n);
 }
 
 /**
@@ -159,11 +160,6 @@ export function assertArchiveHeaderV1(
     );
   }
 
-  if (typeof dr.pn !== "number" || !Number.isFinite(dr.pn)) {
-    throw new TypeError("ArchiveHeaderV1.dr.pn must be a finite number");
-  }
-
-  if (typeof dr.n !== "number" || !Number.isFinite(dr.n)) {
-    throw new TypeError("ArchiveHeaderV1.dr.n must be a finite number");
-  }
+  assertNonNegativeInteger("ArchiveHeaderV1.dr.pn", dr.pn);
+  assertNonNegativeInteger("ArchiveHeaderV1.dr.n", dr.n);
 }

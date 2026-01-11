@@ -240,6 +240,12 @@ export function ratchetDecrypt(args: {
   }
   assertBoundedString("header.sender_device_id", header.sender_device_id, MAX_DEVICE_ID_BYTES);
   assertBoundedString("header.recipient_device_id", header.recipient_device_id, MAX_DEVICE_ID_BYTES);
+  if (!Number.isInteger(header.dr.pn) || header.dr.pn < 0) {
+    throw new TypeError("header.dr.pn must be a non-negative integer");
+  }
+  if (!Number.isInteger(header.dr.n) || header.dr.n < 0) {
+    throw new TypeError("header.dr.n must be a non-negative integer");
+  }
 
   const skipped = useSkipped(working, header);
   if (skipped) {
