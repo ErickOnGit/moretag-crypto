@@ -94,6 +94,24 @@ npm test
 npm run build
 ```
 
+## Production Guides
+
+For production deployments, refer to these detailed guides:
+
+### Security & Architecture
+- [Session ID Guidelines](docs/SESSION_ID_GUIDELINES.md) - How to generate secure session identifiers
+- [Identity Persistence](docs/IDENTITY_PERSISTENCE.md) - Securely storing device identity keys
+- [Session Lifecycle](docs/SESSION_LIFECYCLE.md) - Session expiry and rekey policies
+
+### Operational Procedures
+- [Prekey Rotation](docs/PREKEY_ROTATION.md) - SPK/OPK rotation schedules and automation
+- [Version Migration](docs/VERSION_MIGRATION.md) - Handling protocol upgrades
+- [Integration Test](src/integration.test.ts) - Complete end-to-end example
+
+### Specifications
+- [Wire Format Spec](docs/SPEC.md) - Stable v1 protocol definition
+- [Threat Model](docs/THREAT_MODEL.md) - Security assumptions and mitigations
+
 ## Operational Guidance (v1)
 
 - **Input validation**: All crypto entrypoints enforce strict base64, version/alg, and length limits by default.
