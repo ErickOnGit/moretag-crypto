@@ -127,4 +127,30 @@ describe("FileRatchetStore", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("rejects unsafe session ids", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ratchet-store-"));
+    try {
+      const store = new FileRatchetStore(dir);
+      const root = randomBytes(32);
+      const aliceDh = generateX25519Keypair();
+      const bobDh = generateX25519Keypair();
+
+      const state = ratchetInit({
+        rk32: root,
+        selfDh: aliceDh,
+        remoteDhPub32: bobDh.pub32,
+        sendingFirst: true,
+      });
+
+      expect(() =>
+        store.save("../escape", createPersistedSession(state))
+      ).toThrow(/invalid path separator/);
+      expect(() =>
+        store.save("nested/path", createPersistedSession(state))
+      ).toThrow(/invalid path separator/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

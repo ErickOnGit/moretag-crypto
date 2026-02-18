@@ -4,8 +4,8 @@
  */
 
 /**
- * Double Ratchet header placeholder for v1.
- * Contains the Diffie-Hellman public key and chain counters.
+ * Double Ratchet header for v1.
+ * Contains the current sending Diffie-Hellman public key and chain counters.
  */
 export interface DoubleRatchetHeader {
   /** Base64-encoded Curve25519 public key (32 bytes) */
@@ -32,7 +32,7 @@ export interface HeaderProtoV1 {
   sender_device_id: string;
   /** UUID of the recipient device (for per-device deliveries) */
   recipient_device_id: string;
-  /** Double Ratchet header placeholder */
+  /** Double Ratchet header */
   dr: DoubleRatchetHeader;
 }
 
@@ -49,7 +49,7 @@ export interface ArchiveHeaderV1 {
   nonce_b64: string;
   /** UUID of the device creating the archive */
   sender_device_id: string;
-  /** Double Ratchet header placeholder */
+  /** Double Ratchet header */
   dr: DoubleRatchetHeader;
 }
 

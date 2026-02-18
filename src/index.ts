@@ -56,7 +56,11 @@ export {
 } from "./crypto/seal.js";
 
 // X25519 key agreement
-export { generateX25519Keypair, x25519SharedSecret } from "./crypto/x25519.js";
+export {
+  generateX25519Keypair,
+  x25519SharedSecret,
+  x25519PublicFromPrivate,
+} from "./crypto/x25519.js";
 
 // Key derivation
 export { hkdfSha256 } from "./crypto/hkdf.js";
@@ -68,7 +72,7 @@ export { generateEd25519Keypair, ed25519Sign, ed25519Verify } from "./crypto/ed2
 // X3DH crypto
 export { x3dhInitiatorV1, x3dhResponderV1 } from "./crypto/x3dh.js";
 
-// Double Ratchet (MVP)
+// Double Ratchet
 export {
   ratchetInit,
   ratchetEncrypt,
@@ -94,4 +98,9 @@ export {
 
 // X3DH prekey lifecycle helpers
 export { X3DHPrekeyManagerV1, type SignedPrekeyRecord, type OneTimePrekeyRecord } from "./x3dh/prekey-manager.js";
-export { x3dhInitiatorWithTrustV1, x3dhResponderWithPrekeysV1 } from "./x3dh/session.js";
+export {
+  x3dhInitiatorWithTrustV1,
+  x3dhResponderWithPrekeysV1,
+  x3dhInitiatorBootstrapV1,
+  x3dhResponderBootstrapV1,
+} from "./x3dh/session.js";
