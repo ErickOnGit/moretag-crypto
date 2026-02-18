@@ -28,6 +28,20 @@ export function generateX25519Keypair(): {
 }
 
 /**
+ * Derives a public key from a private X25519 scalar.
+ */
+export function x25519PublicFromPrivate(priv32: Uint8Array): Uint8Array {
+  if (priv32.byteLength !== 32) {
+    throw new TypeError(
+      `Invalid private key length: expected 32 bytes, got ${priv32.byteLength}`
+    );
+  }
+  const k = priv32.slice();
+  clampScalar(k);
+  return x25519.getPublicKey(k);
+}
+
+/**
  * Computes the X25519 shared secret between a private key and a public key.
  *
  * @returns 32-byte shared secret

@@ -14,3 +14,6 @@ export const MAX_SKIP_DERIVE = 1000;
 
 // Maximum UTF-8 byte length for device identifiers.
 export const MAX_DEVICE_ID_BYTES = 256;
+
+// Maximum UTF-8 byte length for storage session identifiers.
+export const MAX_SESSION_ID_BYTES = 256;

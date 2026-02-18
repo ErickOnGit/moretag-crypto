@@ -9,7 +9,7 @@ function encode(str: string): Uint8Array {
   return new TextEncoder().encode(str);
 }
 
-describe("Double Ratchet MVP", () => {
+describe("Double Ratchet", () => {
   it("performs basic send/receive roundtrip", () => {
     const root = randomBytes(32);
     const aliceDh = generateX25519Keypair();

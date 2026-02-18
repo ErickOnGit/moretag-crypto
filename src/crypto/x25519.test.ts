@@ -1,5 +1,9 @@
 import { test, expect } from "vitest";
-import { generateX25519Keypair, x25519SharedSecret } from "./x25519.js";
+import {
+  generateX25519Keypair,
+  x25519PublicFromPrivate,
+  x25519SharedSecret,
+} from "./x25519.js";
 
 test("Alice and Bob shared secrets match", () => {
   // Alice generates her keypair
@@ -65,4 +69,16 @@ test("generateX25519Keypair produces different keys each time", () => {
 
   expect(keypair1.priv32).not.toEqual(keypair2.priv32);
   expect(keypair1.pub32).not.toEqual(keypair2.pub32);
+});
+
+test("x25519PublicFromPrivate matches generated keypair public key", () => {
+  const keypair = generateX25519Keypair();
+  const pub = x25519PublicFromPrivate(keypair.priv32);
+  expect(pub).toEqual(keypair.pub32);
+});
+
+test("x25519PublicFromPrivate enforces 32-byte private key length", () => {
+  expect(() => x25519PublicFromPrivate(new Uint8Array(31))).toThrowError(
+    /Invalid private key length.*expected 32 bytes, got 31/
+  );
 });

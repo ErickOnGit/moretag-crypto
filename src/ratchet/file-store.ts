@@ -15,6 +15,8 @@ import { cloneRatchetState } from "./session-store.js";
 import { hmac } from "@noble/hashes/hmac.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToBase64, decodeStrictBase64 } from "../encoding/base64.js";
+import { assertBoundedString } from "../crypto/validation.js";
+import { MAX_SESSION_ID_BYTES } from "../crypto/limits.js";
 
 function atomicWrite(filePath: string, data: string): void {
   const dir = dirname(filePath);
@@ -41,6 +43,16 @@ function atomicWrite(filePath: string, data: string): void {
   }
 }
 
+function assertSafeSessionId(sessionId: string): void {
+  assertBoundedString("sessionId", sessionId, MAX_SESSION_ID_BYTES);
+  if (sessionId.includes("/") || sessionId.includes("\\") || sessionId.includes("\0")) {
+    throw new TypeError("sessionId contains invalid path separator characters");
+  }
+  if (sessionId === "." || sessionId === "..") {
+    throw new TypeError("sessionId must not be '.' or '..'");
+  }
+}
+
 export class FileRatchetStore implements RatchetSessionStore {
   constructor(
     private baseDir: string,
@@ -54,14 +66,17 @@ export class FileRatchetStore implements RatchetSessionStore {
   }
 
   private pathFor(sessionId: string): string {
+    assertSafeSessionId(sessionId);
     return join(this.baseDir, `${sessionId}.json`);
   }
 
   private versionPath(sessionId: string): string {
+    assertSafeSessionId(sessionId);
     return join(this.baseDir, `${sessionId}.ver`);
   }
 
   private lockPath(sessionId: string): string {
+    assertSafeSessionId(sessionId);
     return join(this.baseDir, `${sessionId}.lock`);
   }
 

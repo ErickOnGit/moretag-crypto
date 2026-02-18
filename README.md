@@ -1,12 +1,13 @@
 # moretag-crypto
 
-TypeScript cryptographic library for end-to-end encrypted messaging with X3DH key agreement.
+TypeScript cryptographic library for end-to-end encrypted messaging with Signal-style
+session setup (X3DH) and message encryption (Double Ratchet).
 
 ## Features
 
 - **X3DH v1** - Extended Triple Diffie-Hellman key agreement using X25519 + Ed25519 + HKDF-SHA256
 - **XChaCha20-Poly1305** - Authenticated encryption with associated data (AEAD)
-- **Double Ratchet Primitives** - KDF functions and header encoding utilities
+- **Double Ratchet v1** - Stateful per-session send/receive ratchet with skipped-key handling
 - **Wire Format Types** - Structured validators for message formats
 - **Base64 Encoding** - Utilities for encoding/decoding cryptographic material
 
@@ -48,9 +49,9 @@ const { session_init, rk32 } = x3dhInitiatorV1({
 
 ### Cryptographic Functions
 - **X3DH**: `x3dhInitiatorV1`, `x3dhResponderV1`
-- **X3DH Lifecycle**: `X3DHPrekeyManagerV1`, `x3dhInitiatorWithTrustV1`, `x3dhResponderWithPrekeysV1`
+- **X3DH Lifecycle**: `X3DHPrekeyManagerV1`, `x3dhInitiatorWithTrustV1`, `x3dhResponderWithPrekeysV1`, `x3dhInitiatorBootstrapV1`, `x3dhResponderBootstrapV1`
 - **AEAD**: `aeadEncryptXChaCha20Poly1305`, `aeadDecryptXChaCha20Poly1305`, `randomNonce24`, `assertKeyNonceLengths`
-- **Key Agreement**: `generateX25519Keypair`, `x25519SharedSecret`
+- **Key Agreement**: `generateX25519Keypair`, `x25519PublicFromPrivate`, `x25519SharedSecret`
 - **Signing**: `generateEd25519Keypair`, `ed25519Sign`, `ed25519Verify`
 - **KDF**: `hkdfSha256`, `kdfRootAndChainKey`, `kdfChainKey`
 - **High-level**: `sealDeliveryV1`, `openDeliveryV1`, `sealArchiveV1`, `openArchiveV1`
@@ -133,6 +134,9 @@ This library implements cryptographic protocols. Please:
 
 - `src/wire/` - Wire format types and structural validators (no crypto)
 - `src/crypto/` - Cryptographic operations and validations
+- `src/x3dh/` - Prekey lifecycle and X3DH session/bootstrap helpers
+- `src/ratchet/` - Double Ratchet state machine and persistence adapters
+- `src/identity/` - Identity pinning and trust management utilities
 - `src/encoding/` - Base64 and other encoding utilities
 
 ## License
