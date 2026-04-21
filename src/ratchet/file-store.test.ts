@@ -13,10 +13,24 @@ function encode(str: string): Uint8Array {
 }
 
 describe("FileRatchetStore", () => {
+  it("requires a 32-byte MAC key", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ratchet-store-"));
+    try {
+      expect(() => new (FileRatchetStore as any)(dir)).toThrow(
+        "macKey32 must be a 32-byte Uint8Array"
+      );
+      expect(() => new FileRatchetStore(dir, randomBytes(31))).toThrow(
+        "macKey32 must be a 32-byte Uint8Array"
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("writes and reads session with atomic replace and prevents replay", () => {
     const dir = mkdtempSync(join(tmpdir(), "ratchet-store-"));
     try {
-      const store = new FileRatchetStore(dir);
+      const store = new FileRatchetStore(dir, randomBytes(32));
 
       const root = randomBytes(32);
       const aliceDh = generateX25519Keypair();
@@ -72,7 +86,7 @@ describe("FileRatchetStore", () => {
   it("detects simple rollback via version counter", () => {
     const dir = mkdtempSync(join(tmpdir(), "ratchet-store-"));
     try {
-      const store = new FileRatchetStore(dir);
+      const store = new FileRatchetStore(dir, randomBytes(32));
       const root = randomBytes(32);
       const aliceDh = generateX25519Keypair();
       const bobDh = generateX25519Keypair();
@@ -100,7 +114,7 @@ describe("FileRatchetStore", () => {
     const dir = mkdtempSync(join(tmpdir(), "ratchet-store-"));
     try {
       const macKey32 = randomBytes(32);
-      const store = new FileRatchetStore(dir, { macKey32 });
+      const store = new FileRatchetStore(dir, macKey32);
 
       const root = randomBytes(32);
       const aliceDh = generateX25519Keypair();
@@ -131,7 +145,7 @@ describe("FileRatchetStore", () => {
   it("rejects unsafe session ids", () => {
     const dir = mkdtempSync(join(tmpdir(), "ratchet-store-"));
     try {
-      const store = new FileRatchetStore(dir);
+      const store = new FileRatchetStore(dir, randomBytes(32));
       const root = randomBytes(32);
       const aliceDh = generateX25519Keypair();
       const bobDh = generateX25519Keypair();
@@ -149,6 +163,31 @@ describe("FileRatchetStore", () => {
       expect(() =>
         store.save("nested/path", createPersistedSession(state))
       ).toThrow(/invalid path separator/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects corrupted persisted state shape", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ratchet-store-"));
+    try {
+      const store = new FileRatchetStore(dir, randomBytes(32));
+      const root = randomBytes(32);
+      const aliceDh = generateX25519Keypair();
+      const bobDh = generateX25519Keypair();
+
+      const state = ratchetInit({
+        rk32: root,
+        selfDh: aliceDh,
+        remoteDhPub32: bobDh.pub32,
+        sendingFirst: true,
+      });
+
+      const malformed = createPersistedSession(state);
+      malformed.state.rk32 = randomBytes(31) as any;
+      store.save("sess", malformed);
+
+      expect(() => store.load("sess")).toThrow(/Corrupt session state: state\.rk32/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

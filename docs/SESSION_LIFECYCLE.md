@@ -795,13 +795,14 @@ async function broadcastForceRekeyMessage(reason: string): Promise<void> {
 
 ```typescript
 import { describe, it, expect, beforeEach } from 'vitest';
+import { randomBytes } from '@noble/ciphers/utils.js';
 
 describe('Session Lifecycle', () => {
   let manager: SessionManager;
   let archive: SessionArchive;
   
   beforeEach(() => {
-    manager = new SessionManager(new FileRatchetStore('/tmp/test'));
+    manager = new SessionManager(new FileRatchetStore('/tmp/test', randomBytes(32)));
     archive = new SessionArchive();
   });
   
