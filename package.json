@@ -44,7 +44,7 @@
     "cbor-x": "^1.6.0"
   },
   "devDependencies": {
-    "@types/node": "^25.0.6",
+    "@types/node": "^25.9.3",
     "typescript": "^5.9.3",
     "vitest": "^4.0.16"
   }
