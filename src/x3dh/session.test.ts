@@ -9,6 +9,7 @@ import {
 } from "./session.js";
 import { x3dhInitiatorV1 } from "../crypto/x3dh.js";
 import { generateX25519Keypair } from "../crypto/x25519.js";
+import { generateEd25519Keypair } from "../crypto/ed25519.js";
 import { ratchetEncrypt, ratchetDecrypt } from "../ratchet/ratchet.js";
 
 function encode(str: string): Uint8Array {
@@ -95,46 +96,62 @@ describe("X3DH session wrappers", () => {
     ).toThrow(/recipient_device_id mismatch/);
   });
 
-  it("responder can pin sender identity with trust registry", () => {
+  it("responder requires the sender's signing key to pin two-key identity", () => {
     const bob = new X3DHPrekeyManagerV1({ recipient_device_id: "bob-device" });
     bob.rotateSignedPrekey(1);
     const trust = new IdentityRegistry();
 
     const alice1 = generateX25519Keypair();
-    const init1 = x3dhInitiatorV1({
+    // session_init WITHOUT the sender's Ed25519 key cannot establish trust.
+    const initNoSig = x3dhInitiatorV1({
       sender_device_id: "alice-device",
       recipient_bundle: bob.getPrekeyBundle(),
       initiator_ik_priv32: alice1.priv32,
     });
     expect(() =>
-      x3dhResponderWithPrekeysV1({
-        session_init: init1.session_init,
-        prekeys: bob,
-        trust,
-      })
+      x3dhResponderWithPrekeysV1({ session_init: initNoSig.session_init, prekeys: bob, trust })
+    ).toThrow(/sender_ik_sig_pub_b64 is required/);
+  });
+
+  it("responder pins sender identity, blocks rotation, and accepts approveRotation", () => {
+    const bob = new X3DHPrekeyManagerV1({ recipient_device_id: "bob-device" });
+    bob.rotateSignedPrekey(1);
+    const trust = new IdentityRegistry();
+
+    const alice1 = generateX25519Keypair();
+    const alice1Sig = generateEd25519Keypair();
+    const init1 = x3dhInitiatorV1({
+      sender_device_id: "alice-device",
+      recipient_bundle: bob.getPrekeyBundle(),
+      initiator_ik_priv32: alice1.priv32,
+      initiator_ik_sig_pub32: alice1Sig.pub32,
+    });
+    expect(() =>
+      x3dhResponderWithPrekeysV1({ session_init: init1.session_init, prekeys: bob, trust })
     ).not.toThrow();
 
+    // A different sender identity is rejected (no silent rotation).
     const alice2 = generateX25519Keypair();
+    const alice2Sig = generateEd25519Keypair();
     const init2 = x3dhInitiatorV1({
       sender_device_id: "alice-device",
       recipient_bundle: bob.getPrekeyBundle(),
       initiator_ik_priv32: alice2.priv32,
+      initiator_ik_sig_pub32: alice2Sig.pub32,
     });
     expect(() =>
-      x3dhResponderWithPrekeysV1({
-        session_init: init2.session_init,
-        prekeys: bob,
-        trust,
-      })
+      x3dhResponderWithPrekeysV1({ session_init: init2.session_init, prekeys: bob, trust })
     ).toThrow(/mismatch/);
+    expect(trust.isBlocked("alice-device")).toBe(true);
 
+    // Out-of-band approval of the new identity unblocks subsequent contact.
+    trust.approveRotation({
+      device_id: "alice-device",
+      ik_pub_b64: init2.session_init.sender_ik_pub_b64,
+      ik_sig_pub_b64: init2.session_init.sender_ik_sig_pub_b64!,
+    });
     expect(() =>
-      x3dhResponderWithPrekeysV1({
-        session_init: init2.session_init,
-        prekeys: bob,
-        trust,
-        allowRotateIdentity: true,
-      })
+      x3dhResponderWithPrekeysV1({ session_init: init2.session_init, prekeys: bob, trust })
     ).not.toThrow();
   });
 

@@ -58,6 +58,18 @@ export {
   openAttachmentV1,
 } from "./crypto/seal.js";
 
+// Typed errors (consumers branch on these via instanceof)
+export {
+  ReplayDetectedError,
+  SessionNotFoundError,
+  RatchetStoreConflictError,
+  IdentityMismatchError,
+} from "./errors.js";
+
+// Direction-scoped session id derivation
+export { deriveDirectionScopedSessionIdV1 } from "./session-id.js";
+export type { SessionDirectionV1 } from "./session-id.js";
+
 // X25519 key agreement
 export {
   generateX25519Keypair,
@@ -90,17 +102,32 @@ export {
   type PersistedSession,
   createPersistedSession,
 } from "./ratchet/session-store.js";
+export {
+  serializeRatchetStateV1,
+  deserializeRatchetStateV1,
+  serializePersistedSessionV1,
+  deserializePersistedSessionV1,
+  type SerializedRatchetStateV1,
+  type SerializedPersistedSessionV1,
+} from "./ratchet/serialization.js";
 export { FileRatchetStore } from "./ratchet/file-store.js";
 
 // Identity trust helpers
 export {
   IdentityRegistry,
-  type IdentityRecord,
-  type TrustResult,
+  type IdentityRecordV1,
+  type IdentityRegistryStateV1,
 } from "./identity/trust.js";
 
 // X3DH prekey lifecycle helpers
-export { X3DHPrekeyManagerV1, type SignedPrekeyRecord, type OneTimePrekeyRecord } from "./x3dh/prekey-manager.js";
+export {
+  X3DHPrekeyManagerV1,
+  type SignedPrekeyRecord,
+  type OneTimePrekeyRecord,
+  type SerializedSignedPrekeyV1,
+  type SerializedOneTimePrekeyV1,
+  type X3DHPrekeyManagerStateV1,
+} from "./x3dh/prekey-manager.js";
 export {
   x3dhInitiatorWithTrustV1,
   x3dhResponderWithPrekeysV1,

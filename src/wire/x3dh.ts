@@ -50,6 +50,11 @@ export interface X3DHSessionInitV1 {
   sender_ik_pub_b64: string; // X25519 pub, 32B after decode
   ek_pub_b64: string;        // X25519 pub, 32B after decode
 
+  // Optional Ed25519 signing identity key of the sender, carried so the
+  // responder can pin the sender's FULL (two-key) identity on first contact.
+  // Not used in the X3DH DH computation; trust-layer only.
+  sender_ik_sig_pub_b64?: string; // Ed25519 pub, 32B after decode
+
   recipient_device_id: string;
 
   spk_id: X3DHPrekeyId;
@@ -126,6 +131,10 @@ export function assertX3DHSessionInitV1(
     if (typeof o[k] !== "string") {
       throw new TypeError(`X3DHSessionInitV1.${k} must be a string`);
     }
+  }
+
+  if (o.sender_ik_sig_pub_b64 !== undefined && typeof o.sender_ik_sig_pub_b64 !== "string") {
+    throw new TypeError("X3DHSessionInitV1.sender_ik_sig_pub_b64 must be a string if provided");
   }
 
   if (o.spk_id === undefined || (typeof o.spk_id !== "number" && typeof o.spk_id !== "string")) {
