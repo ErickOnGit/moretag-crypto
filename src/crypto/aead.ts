@@ -12,6 +12,14 @@ export function randomNonce24(): Uint8Array {
 }
 
 /**
+ * Generates a cryptographically secure random 32-byte key.
+ * Used for per-attachment symmetric keys (see sealAttachmentV1).
+ */
+export function randomKey32(): Uint8Array {
+  return randomBytes(KEY_LENGTH);
+}
+
+/**
  * Validates that the key and nonce have the correct lengths for XChaCha20-Poly1305.
  * Throws TypeError if lengths are incorrect.
  */

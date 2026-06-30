@@ -38,6 +38,7 @@ export { bytesToBase64, base64ToBytes } from "./encoding/base64.js";
 export { encodeAADFromHeaderV1 } from "./crypto/aad.js";
 export {
   randomNonce24,
+  randomKey32,
   assertKeyNonceLengths,
   aeadEncryptXChaCha20Poly1305,
   aeadDecryptXChaCha20Poly1305,
@@ -53,6 +54,8 @@ export {
   openDeliveryV1,
   sealArchiveV1,
   openArchiveV1,
+  sealAttachmentV1,
+  openAttachmentV1,
 } from "./crypto/seal.js";
 
 // X25519 key agreement
