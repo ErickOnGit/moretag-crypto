@@ -74,8 +74,20 @@ export function x3dhInitiatorV1(args: {
   recipient_bundle: X3DHPrekeyBundleV1;
   initiator_ik_priv32: Uint8Array;
   initiator_ek_priv32?: Uint8Array;
+  /**
+   * Optional Ed25519 signing identity public key of the initiator. When
+   * provided it is published in the session_init as `sender_ik_sig_pub_b64`
+   * so the responder can pin the initiator's full two-key identity (TOFU).
+   */
+  initiator_ik_sig_pub32?: Uint8Array;
 }): { session_init: X3DHSessionInitV1; rk32: Uint8Array } {
   const { sender_device_id, recipient_bundle, initiator_ik_priv32 } = args;
+
+  if (args.initiator_ik_sig_pub32 !== undefined && args.initiator_ik_sig_pub32.byteLength !== 32) {
+    throw new TypeError(
+      `Invalid initiator_ik_sig_pub32 length: expected 32 bytes, got ${args.initiator_ik_sig_pub32.byteLength}`
+    );
+  }
 
   if (recipient_bundle.v !== 1) {
     throw new TypeError("Unsupported X3DHPrekeyBundleV1 version");
@@ -169,6 +181,9 @@ export function x3dhInitiatorV1(args: {
     sender_device_id,
     sender_ik_pub_b64: bytesToBase64(ik_a_pub32),
     ek_pub_b64: bytesToBase64(ek_pub32),
+    ...(args.initiator_ik_sig_pub32
+      ? { sender_ik_sig_pub_b64: bytesToBase64(args.initiator_ik_sig_pub32) }
+      : {}),
     recipient_device_id: recipient_bundle.recipient_device_id,
     spk_id: recipient_bundle.spk_id,
     used_opk: !!opk_b_pub32,

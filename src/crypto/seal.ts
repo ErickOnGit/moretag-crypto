@@ -8,12 +8,17 @@ import { encodeAADFromHeaderV1 } from "./aad.js";
 import {
   aeadEncryptXChaCha20Poly1305,
   aeadDecryptXChaCha20Poly1305,
+  randomKey32,
+  randomNonce24,
 } from "./aead.js";
 import {
   decodeNonceFromHeaderV1,
   decodeDhPubFromHeaderV1,
 } from "./header-utils.js";
 import { bytesToBase64, decodeStrictBase64 } from "../encoding/base64.js";
+
+/** Attachments carry no header, so they are sealed with empty AAD. */
+const EMPTY_AAD = new Uint8Array(0);
 import { MAX_PLAINTEXT_BYTES, MAX_CIPHERTEXT_BYTES } from "./limits.js";
 
 /**
@@ -99,6 +104,68 @@ export function openDeliveryV1(args: {
     nonce24,
     ciphertextBytes,
     aadBytes
+  );
+}
+
+/**
+ * Seals (encrypts) an attachment blob with a standalone, single-use symmetric key.
+ *
+ * Unlike sealDeliveryV1, attachments are not bound to a ratchet header: the
+ * returned key/nonce travel inside the (already E2EE) ratcheted message that
+ * references the uploaded ciphertext, so no AAD is needed — the AEAD tag alone
+ * authenticates the bytes. A fresh random key per attachment makes nonce reuse a
+ * non-issue. The binary ciphertext is intended to be uploaded as-is to storage.
+ *
+ * @param args.plaintext - Attachment bytes to encrypt
+ * @param args.key32 - Optional 32-byte key (defaults to a fresh random key)
+ * @param args.nonce24 - Optional 24-byte nonce (defaults to a fresh random nonce)
+ * @returns base64 key/nonce (to embed in the ratcheted message) and binary ciphertext
+ */
+export function sealAttachmentV1(args: {
+  plaintext: Uint8Array;
+  key32?: Uint8Array;
+  nonce24?: Uint8Array;
+}): { key_b64: string; nonce_b64: string; ciphertext: Uint8Array } {
+  const key32 = args.key32 ?? randomKey32();
+  const nonce24 = args.nonce24 ?? randomNonce24();
+
+  const ciphertext = aeadEncryptXChaCha20Poly1305(
+    key32,
+    nonce24,
+    args.plaintext,
+    EMPTY_AAD
+  );
+
+  return {
+    key_b64: bytesToBase64(key32),
+    nonce_b64: bytesToBase64(nonce24),
+    ciphertext,
+  };
+}
+
+/**
+ * Opens (decrypts) an attachment blob sealed with sealAttachmentV1.
+ *
+ * @param args.key_b64 - Base64-encoded 32-byte key (from the ratcheted message)
+ * @param args.nonce_b64 - Base64-encoded 24-byte nonce
+ * @param args.ciphertext - Binary ciphertext downloaded from storage
+ * @returns Decrypted attachment bytes
+ * @throws TypeError if key/nonce are not valid base64 or wrong length
+ * @throws Error if authentication fails (wrong key, tampered ciphertext)
+ */
+export function openAttachmentV1(args: {
+  key_b64: string;
+  nonce_b64: string;
+  ciphertext: Uint8Array;
+}): Uint8Array {
+  const key32 = decodeStrictBase64("key_b64", args.key_b64);
+  const nonce24 = decodeStrictBase64("nonce_b64", args.nonce_b64);
+
+  return aeadDecryptXChaCha20Poly1305(
+    key32,
+    nonce24,
+    args.ciphertext,
+    EMPTY_AAD
   );
 }
 
