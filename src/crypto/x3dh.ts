@@ -17,7 +17,15 @@ import type { X3DHPrekeyBundleV1, X3DHSessionInitV1 } from "../wire/x3dh.js";
 import { Encoder } from "cbor-x";
 
 const ENC = new TextEncoder();
-const CBOR_ENCODER = new Encoder({ mapsAsObjects: false, useRecords: false });
+// tagUint8Array: false is REQUIRED for cross-platform determinism. cbor-x's Node
+// build wraps Uint8Array in CBOR tag 64 while its browser/Hermes builds emit a
+// plain byte string; without pinning this, an SPK signature made on one platform
+// would not verify on another (or on the server). Force plain byte strings.
+const CBOR_ENCODER = new Encoder({
+  mapsAsObjects: false,
+  useRecords: false,
+  tagUint8Array: false,
+});
 
 export function decodeX25519PubB64(pub_b64: string, fieldName: string): Uint8Array {
   const decoded = decodeStrictBase64(fieldName, pub_b64);
