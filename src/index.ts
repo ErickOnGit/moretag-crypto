@@ -110,7 +110,7 @@ export {
   type SerializedRatchetStateV1,
   type SerializedPersistedSessionV1,
 } from "./ratchet/serialization.js";
-export { FileRatchetStore } from "./ratchet/file-store.js";
+// FileRatchetStore is Node-only (fs); import from "moretag-crypto/node" — keeps this entry fs-free.
 
 // Identity trust helpers
 export {
