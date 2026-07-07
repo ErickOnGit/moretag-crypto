@@ -34,6 +34,19 @@ export {
 // Encoding utilities
 export { bytesToBase64, base64ToBytes } from "./encoding/base64.js";
 
+// Pluggable low-level primitives (pure-JS @noble by default; hosts may inject
+// faster native implementations — see crypto/primitives.ts for the contract)
+export {
+  registerCryptoPrimitives,
+  resetCryptoPrimitives,
+  getCryptoPrimitivesProviderName,
+  type CryptoPrimitives,
+  type CryptoPrimitivesProvider,
+} from "./crypto/primitives.js";
+// Adapter for Node-crypto-shaped backends lives at
+// "moretag-crypto/providers/node-crypto" (kept out of this entry so the
+// default import graph stays exactly as before).
+
 // Crypto fundamentals
 export { encodeAADFromHeaderV1 } from "./crypto/aad.js";
 export {

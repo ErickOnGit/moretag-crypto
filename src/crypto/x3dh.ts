@@ -8,9 +8,12 @@
  * - requires ids needed for key management (spk_id always, opk_id iff OPK used)
  */
 
-import { x25519 } from "@noble/curves/ed25519.js";
 import { bytesToBase64, decodeStrictBase64 } from "../encoding/base64.js";
-import { generateX25519Keypair, x25519SharedSecret } from "./x25519.js";
+import {
+  generateX25519Keypair,
+  x25519PublicFromPrivate,
+  x25519SharedSecret,
+} from "./x25519.js";
 import { hkdfSha256 } from "./hkdf.js";
 import { ed25519Verify } from "./ed25519.js";
 import type { X3DHPrekeyBundleV1, X3DHSessionInitV1 } from "../wire/x3dh.js";
@@ -120,14 +123,14 @@ export function x3dhInitiatorV1(args: {
       );
     }
     ek_priv32 = args.initiator_ek_priv32;
-    ek_pub32 = x25519.getPublicKey(ek_priv32);
+    ek_pub32 = x25519PublicFromPrivate(ek_priv32);
   } else {
     const kp = generateX25519Keypair();
     ek_priv32 = kp.priv32;
     ek_pub32 = kp.pub32;
   }
 
-  const ik_a_pub32 = x25519.getPublicKey(initiator_ik_priv32);
+  const ik_a_pub32 = x25519PublicFromPrivate(initiator_ik_priv32);
 
   // Decode recipient bundle fields
   const ik_b_pub32 = decodeX25519PubB64(recipient_bundle.ik_pub_b64, "ik_pub_b64");

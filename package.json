@@ -14,6 +14,11 @@
       "types": "./dist/ratchet/file-store.d.ts",
       "import": "./dist/ratchet/file-store.js",
       "default": "./dist/ratchet/file-store.js"
+    },
+    "./providers/node-crypto": {
+      "types": "./dist/providers/node-crypto.d.ts",
+      "import": "./dist/providers/node-crypto.js",
+      "default": "./dist/providers/node-crypto.js"
     }
   },
   "files": [
