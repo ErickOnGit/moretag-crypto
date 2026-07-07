@@ -1,10 +1,10 @@
 /**
  * X25519 key agreement primitives using Curve25519.
- * Uses @noble/curves for elliptic curve operations.
+ * Backed by the active primitives provider (@noble by default; see
+ * primitives.ts for the host-injection seam).
  */
 
-import { x25519 } from "@noble/curves/ed25519.js";
-import { randomBytes } from "@noble/ciphers/utils.js";
+import { getPrimitives } from "./primitives.js";
 
 function clampScalar(k: Uint8Array): void {
   if (k.length !== 32) throw new TypeError("clampScalar expects 32 bytes");
@@ -21,9 +21,10 @@ export function generateX25519Keypair(): {
   priv32: Uint8Array;
   pub32: Uint8Array;
 } {
-  const priv32 = randomBytes(32);
+  const p = getPrimitives();
+  const priv32 = p.randomBytes(32);
   clampScalar(priv32);
-  const pub32 = x25519.getPublicKey(priv32);
+  const pub32 = p.x25519GetPublicKey(priv32);
   return { priv32, pub32 };
 }
 
@@ -38,7 +39,7 @@ export function x25519PublicFromPrivate(priv32: Uint8Array): Uint8Array {
   }
   const k = priv32.slice();
   clampScalar(k);
-  return x25519.getPublicKey(k);
+  return getPrimitives().x25519GetPublicKey(k);
 }
 
 /**
@@ -65,7 +66,17 @@ export function x25519SharedSecret(
   const k = priv32.slice();
   clampScalar(k);
 
-  // Normalize to exactly 32 bytes
-  const ss = x25519.getSharedSecret(k, pub32);
-  return ss.length === 32 ? ss : ss.slice(-32);
+  const ss = getPrimitives().x25519SharedSecret(k, pub32);
+  if (ss.byteLength !== 32) {
+    throw new TypeError(
+      `Invalid shared secret length: expected 32 bytes, got ${ss.byteLength}`
+    );
+  }
+  // Low-order peer keys yield an all-zero secret. @noble and OpenSSL-family
+  // backends both reject this, but each with its own error; check here so
+  // every provider fails identically (RFC 7748 §6.1 MAY-check, Signal-style).
+  if (ss.every((b) => b === 0)) {
+    throw new Error("x25519SharedSecret: all-zero shared secret rejected");
+  }
+  return ss;
 }

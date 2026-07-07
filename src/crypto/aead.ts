@@ -1,5 +1,9 @@
-import { xchacha20poly1305 } from "@noble/ciphers/chacha.js";
-import { randomBytes } from "@noble/ciphers/utils.js";
+/**
+ * XChaCha20-Poly1305 AEAD.
+ * Backed by the active primitives provider (@noble by default; see
+ * primitives.ts for the host-injection seam).
+ */
+import { getPrimitives } from "./primitives.js";
 
 const KEY_LENGTH = 32;
 const NONCE_LENGTH = 24;
@@ -8,7 +12,7 @@ const NONCE_LENGTH = 24;
  * Generates a cryptographically secure random 24-byte nonce.
  */
 export function randomNonce24(): Uint8Array {
-  return randomBytes(NONCE_LENGTH);
+  return getPrimitives().randomBytes(NONCE_LENGTH);
 }
 
 /**
@@ -16,7 +20,7 @@ export function randomNonce24(): Uint8Array {
  * Used for per-attachment symmetric keys (see sealAttachmentV1).
  */
 export function randomKey32(): Uint8Array {
-  return randomBytes(KEY_LENGTH);
+  return getPrimitives().randomBytes(KEY_LENGTH);
 }
 
 /**
@@ -55,8 +59,7 @@ export function aeadEncryptXChaCha20Poly1305(
   aad: Uint8Array
 ): Uint8Array {
   assertKeyNonceLengths(key32, nonce24);
-  const cipher = xchacha20poly1305(key32, nonce24, aad);
-  return cipher.encrypt(plaintext);
+  return getPrimitives().xchacha20poly1305Encrypt(key32, nonce24, plaintext, aad);
 }
 
 /**
@@ -76,7 +79,6 @@ export function aeadDecryptXChaCha20Poly1305(
   aad: Uint8Array
 ): Uint8Array {
   assertKeyNonceLengths(key32, nonce24);
-  const cipher = xchacha20poly1305(key32, nonce24, aad);
-  // Encrypted data authentication tag is verified internally by @noble/ciphers
-  return cipher.decrypt(ciphertext);
+  // Authentication tag is verified by the provider; it throws on mismatch.
+  return getPrimitives().xchacha20poly1305Decrypt(key32, nonce24, ciphertext, aad);
 }

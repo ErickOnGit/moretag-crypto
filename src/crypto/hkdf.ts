@@ -1,10 +1,10 @@
 /**
  * HKDF (HMAC-based Key Derivation Function) using SHA-256.
- * Based on RFC 5869.
+ * Based on RFC 5869. Backed by the active primitives provider (@noble by
+ * default; see primitives.ts for the host-injection seam).
  */
 
-import { hkdf } from "@noble/hashes/hkdf.js";
-import { sha256 } from "@noble/hashes/sha2.js";
+import { getPrimitives } from "./primitives.js";
 
 /**
  * Derives cryptographic keys using HKDF with SHA-256.
@@ -26,5 +26,5 @@ export function hkdfSha256(
     throw new TypeError(`Invalid length: must be > 0, got ${length}`);
   }
 
-  return hkdf(sha256, ikm, salt, info, length);
+  return getPrimitives().hkdfSha256(ikm, salt, info, length);
 }
