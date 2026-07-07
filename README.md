@@ -60,6 +60,31 @@ const { session_init, rk32 } = x3dhInitiatorV1({
 ### Encoding Utilities
 - `bytesToBase64`, `base64ToBytes`
 
+### Pluggable Primitives (optional)
+- `registerCryptoPrimitives`, `resetCryptoPrimitives`, `getCryptoPrimitivesProviderName`
+
+The package is pure JS (@noble) by default and stays free of native
+dependencies. Hosts running on VMs without a JIT (e.g. React Native/Hermes,
+where pure-JS crypto is 10-50x slower) can inject faster low-level primitives:
+
+```ts
+import { registerCryptoPrimitives } from "moretag-crypto";
+import { createNodeCryptoPrimitives } from "moretag-crypto/providers/node-crypto";
+import QuickCrypto from "react-native-quick-crypto"; // or node:crypto
+
+registerCryptoPrimitives(
+  createNodeCryptoPrimitives(QuickCrypto, { name: "quick-crypto" })
+);
+```
+
+Providers may override any subset of primitives (x25519, ed25519,
+XChaCha20-Poly1305, HKDF-SHA256, randomBytes); the rest keep the @noble
+defaults. A provider must supply a CSPRNG `randomBytes`, and registration runs
+known-answer self-tests of every supplied primitive against the reference
+implementation, rejecting the provider on any divergence — a subtly
+incompatible backend can never silently corrupt sessions. See
+`src/crypto/primitives.ts` for the full contract.
+
 ## Wire vs Crypto Validation
 
 This library separates validation concerns into two layers:
