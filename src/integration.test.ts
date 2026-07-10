@@ -136,7 +136,7 @@ describe("End-to-End Integration", () => {
       // Step 6: Persist session state to FileRatchetStore
       // =====================================================================
       const macKey = randomBytes(32);
-      const store = new FileRatchetStore(storeDir, { macKey32: macKey });
+      const store = new FileRatchetStore(storeDir, macKey);
 
       // Generate session IDs using deterministic scheme
       const aliceSessionId = computeSessionId(
