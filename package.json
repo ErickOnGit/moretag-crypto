@@ -50,7 +50,7 @@
   "dependencies": {
     "@noble/ciphers": "^2.1.1",
     "@noble/curves": "^2.0.1",
-    "@noble/hashes": "^2.0.1",
+    "@noble/hashes": "^2.3.0",
     "cbor-x": "^1.6.0"
   },
   "devDependencies": {
