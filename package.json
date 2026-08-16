@@ -48,7 +48,7 @@
   "license": "Apache-2.0",
   "description": "TypeScript cryptographic library for end-to-end encrypted messaging with X3DH key agreement",
   "dependencies": {
-    "@noble/ciphers": "^2.1.1",
+    "@noble/ciphers": "^2.3.0",
     "@noble/curves": "^2.0.1",
     "@noble/hashes": "^2.0.1",
     "cbor-x": "^1.6.0"
