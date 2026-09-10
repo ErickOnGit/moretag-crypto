@@ -18,6 +18,27 @@ import { bytesToBase64, decodeStrictBase64 } from "../encoding/base64.js";
 import { assertBoundedString } from "../crypto/validation.js";
 import { MAX_SESSION_ID_BYTES } from "../crypto/limits.js";
 
+interface SessionEnvelope {
+  payload: unknown;
+  mac_b64: string;
+}
+
+interface PersistedStateShape {
+  version: number;
+  state: {
+    version: 1;
+    rk32: number[];
+    ck_s32?: number[];
+    ck_r32?: number[];
+    ns: number;
+    nr: number;
+    pn: number;
+    dh_self: { priv32: number[]; pub32: number[] };
+    dh_remote_pub32: number[];
+    skipped: Array<[string, number[]]>;
+  };
+}
+
 function atomicWrite(filePath: string, data: string): void {
   const dir = dirname(filePath);
   mkdirSync(dir, { recursive: true });
@@ -53,15 +74,24 @@ function assertSafeSessionId(sessionId: string): void {
   }
 }
 
+function isSessionEnvelope(v: unknown): v is SessionEnvelope {
+  return (
+    typeof v === "object" &&
+    v !== null &&
+    !Array.isArray(v) &&
+    "mac_b64" in v &&
+    typeof v.mac_b64 === "string" &&
+    "payload" in v
+  );
+}
+
 export class FileRatchetStore implements RatchetSessionStore {
   constructor(
     private baseDir: string,
-    private opts?: { macKey32?: Uint8Array }
+    private macKey32: Uint8Array
   ) {
-    if (opts?.macKey32 && opts.macKey32.byteLength !== 32) {
-      throw new TypeError(
-        `Invalid macKey32 length: expected 32 bytes, got ${opts.macKey32.byteLength}`
-      );
+    if (!(macKey32 instanceof Uint8Array) || macKey32.byteLength !== 32) {
+      throw new TypeError("macKey32 must be a 32-byte Uint8Array");
     }
   }
 
@@ -139,22 +169,62 @@ export class FileRatchetStore implements RatchetSessionStore {
     };
   }
 
-  private computeMac(bytes: Uint8Array): string {
-    if (!this.opts?.macKey32) {
-      throw new Error("MAC key is not configured");
+  private validatePersistedStateShape(parsed: unknown): asserts parsed is PersistedStateShape {
+    const fail = (field: string): never => {
+      throw new Error(`Corrupt session state: ${field}`);
+    };
+    const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+      typeof v === "object" && v !== null && !Array.isArray(v);
+    const isNonNegativeInteger = (v: unknown): v is number =>
+      typeof v === "number" && Number.isInteger(v) && v >= 0;
+    const isSerializedByteArray32 = (v: unknown): v is number[] =>
+      Array.isArray(v) &&
+      v.length === 32 &&
+      v.every((n) => typeof n === "number" && Number.isInteger(n) && n >= 0 && n <= 255);
+
+    if (!isPlainObject(parsed)) fail("root");
+    const root = parsed as Record<string, unknown>;
+    if (!isNonNegativeInteger(root.version)) fail("version");
+    if (!isPlainObject(root.state)) fail("state");
+
+    const state = root.state as Record<string, unknown>;
+    if (state.version !== 1) fail("state.version");
+    if (!isSerializedByteArray32(state.rk32)) fail("state.rk32");
+    if (state.ck_s32 !== undefined && !isSerializedByteArray32(state.ck_s32)) fail("state.ck_s32");
+    if (state.ck_r32 !== undefined && !isSerializedByteArray32(state.ck_r32)) fail("state.ck_r32");
+    if (!isNonNegativeInteger(state.ns)) fail("state.ns");
+    if (!isNonNegativeInteger(state.nr)) fail("state.nr");
+    if (!isNonNegativeInteger(state.pn)) fail("state.pn");
+
+    if (!isPlainObject(state.dh_self)) fail("state.dh_self");
+    const dhSelf = state.dh_self as Record<string, unknown>;
+    if (!isSerializedByteArray32(dhSelf.priv32)) fail("state.dh_self.priv32");
+    if (!isSerializedByteArray32(dhSelf.pub32)) fail("state.dh_self.pub32");
+    if (!isSerializedByteArray32(state.dh_remote_pub32)) fail("state.dh_remote_pub32");
+
+    if (!Array.isArray(state.skipped)) fail("state.skipped");
+    const skipped = state.skipped as unknown[];
+    for (let i = 0; i < skipped.length; i++) {
+      const entry = skipped[i];
+      if (!Array.isArray(entry) || entry.length !== 2) fail(`state.skipped[${i}]`);
+      const [key, value] = entry as [unknown, unknown];
+      if (typeof key !== "string") fail(`state.skipped[${i}][0]`);
+      if (!isSerializedByteArray32(value)) fail(`state.skipped[${i}][1]`);
     }
-    const mac = hmac(sha256, this.opts.macKey32, bytes);
+  }
+
+  private computeMac(bytes: Uint8Array): string {
+    const mac = hmac(sha256, this.macKey32, bytes);
     return bytesToBase64(mac);
   }
 
   private verifyMac(label: string, mac_b64: string, bytes: Uint8Array): void {
-    if (!this.opts?.macKey32) {
-      throw new Error(`Cannot verify ${label}: MAC key is not configured`);
-    }
     const expected = decodeStrictBase64(label, mac_b64);
-    const actual = hmac(sha256, this.opts.macKey32, bytes);
+    const actual = hmac(sha256, this.macKey32, bytes);
     if (expected.byteLength !== actual.byteLength) {
-      throw new Error(`Invalid ${label}: MAC length mismatch`);
+      throw new Error(
+        `Invalid ${label}: MAC length mismatch (expected ${actual.byteLength}, got ${expected.byteLength})`
+      );
     }
     let diff = 0;
     for (let i = 0; i < actual.length; i++) diff |= expected[i]! ^ actual[i]!;
@@ -166,22 +236,42 @@ export class FileRatchetStore implements RatchetSessionStore {
     if (!existsSync(file)) return undefined;
 
     const data = readFileSync(file, "utf-8");
-    const parsed = JSON.parse(data) as any;
+    const parsed: unknown = JSON.parse(data);
 
-    if (parsed && typeof parsed === "object" && typeof parsed.mac_b64 === "string") {
-      const bytes = new TextEncoder().encode(JSON.stringify(parsed.payload));
-      this.verifyMac("mac_b64", parsed.mac_b64, bytes);
-      parsed.payload = parsed.payload ?? {};
-      parsed.version = parsed.payload.version;
-      parsed.state = parsed.payload.state;
+    if (!isSessionEnvelope(parsed)) {
+      throw new Error("Invalid session file: missing mac_b64");
     }
 
+    const bytes = new TextEncoder().encode(JSON.stringify(parsed.payload));
+    this.verifyMac("mac_b64", parsed.mac_b64, bytes);
+    this.validatePersistedStateShape(parsed.payload);
+    const payload = parsed.payload;
+
     const counter = this.readCounter(sessionId);
-    if (counter !== undefined && parsed.version < counter) {
+    if (counter !== undefined && payload.version < counter) {
       throw new Error("Rollback detected: session version behind persisted counter");
     }
 
-    return { version: parsed.version, state: cloneRatchetState(parsed.state) };
+    return {
+      version: payload.version,
+      state: cloneRatchetState({
+        version: payload.state.version,
+        rk32: Uint8Array.from(payload.state.rk32),
+        ck_s32: payload.state.ck_s32 ? Uint8Array.from(payload.state.ck_s32) : undefined,
+        ck_r32: payload.state.ck_r32 ? Uint8Array.from(payload.state.ck_r32) : undefined,
+        ns: payload.state.ns,
+        nr: payload.state.nr,
+        pn: payload.state.pn,
+        dh_self: {
+          priv32: Uint8Array.from(payload.state.dh_self.priv32),
+          pub32: Uint8Array.from(payload.state.dh_self.pub32),
+        },
+        dh_remote_pub32: Uint8Array.from(payload.state.dh_remote_pub32),
+        skipped: new Map(
+          payload.state.skipped.map(([k, v]) => [k, Uint8Array.from(v)] as const)
+        ),
+      }),
+    };
   }
 
   load(sessionId: string): PersistedSession | undefined {
@@ -198,12 +288,10 @@ export class FileRatchetStore implements RatchetSessionStore {
     const payloadObj = this.encodeRecord(record);
     const payloadJson = JSON.stringify(payloadObj);
 
-    const toWrite = this.opts?.macKey32
-      ? JSON.stringify({
-          payload: payloadObj,
-          mac_b64: this.computeMac(new TextEncoder().encode(payloadJson)),
-        })
-      : payloadJson;
+    const toWrite = JSON.stringify({
+      payload: payloadObj,
+      mac_b64: this.computeMac(new TextEncoder().encode(payloadJson)),
+    });
 
     atomicWrite(file, toWrite);
     this.writeCounter(sessionId, record.version);
