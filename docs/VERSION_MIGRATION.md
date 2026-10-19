@@ -353,15 +353,16 @@ function ratchetDecrypt(args: any) {
 
 ## Stored Session Migration
 
-### FileRatchetStore: MAC key now required (package 2.2.0)
+### FileRatchetStore: MAC key required, signed and session-bound files (packages 2.2.0 and 2.2.1)
 
-This is a storage change only; the ratchet protocol and wire format are unchanged.
+This is a storage change only; the ratchet protocol and wire format are unchanged. 2.2.0 made the MAC key required; 2.2.1 bound each file to its session, signed the rollback counter, and tightened load-time checks. Upgrade straight to 2.2.1 — the steps below cover coming from 2.1.x or 2.2.0.
 
 **What changed**
 
 - The constructor changed from `new FileRatchetStore(dir, { macKey32 })` to `new FileRatchetStore(dir, macKey32)`. The key is required and must be a 32-byte `Uint8Array`; anything else throws a `TypeError`.
-- Every session file is signed, and the MAC now covers the session ID as well as the contents (envelope `v: 2`), so a file copied over another session's file fails to verify.
-- The rollback counter (`<sessionId>.ver`) is signed too, and bound to its session. A counter that is edited, copied from another session, or deleted makes `load()` throw instead of silently skipping the rollback check. `load()` throws `Invalid session file: missing mac_b64` for files written without a MAC key, `Legacy session file format` for files signed by 2.1.x, and `Corrupt session state: <field>` for signed files whose contents are malformed.
+- Every session file is signed, and the MAC covers the session ID as well as the contents (envelope `v: 2`), so a file copied over another session's file fails to verify.
+- The rollback counter (`<sessionId>.ver`) is signed too, and bound to its session. A counter that is edited, copied from another session, or deleted makes `load()` throw instead of silently skipping the rollback check.
+- `load()` throws `Invalid session file: missing mac_b64` for files written without a MAC key, `Legacy session file format` / `Legacy rollback counter format` for files written by 2.1.x or 2.2.0, and `Corrupt session state: <field>` for signed files whose contents are malformed (including more than 2000 skipped keys or bad skipped-key IDs).
 
 **Upgrading call sites**
 
@@ -371,7 +372,7 @@ import { FileRatchetStore } from 'moretag-crypto/node';
 // Before (2.1.x): MAC was optional
 const store = new FileRatchetStore(dir, { macKey32 });
 
-// After (2.2.0): MAC key is a required positional argument
+// After (2.2.0+): MAC key is a required positional argument
 const store = new FileRatchetStore(dir, macKey32);
 ```
 
@@ -379,7 +380,7 @@ Load `macKey32` from a persistent secret (OS keychain, secret manager, encrypted
 
 **Existing session files**
 
-- Files written by 2.1.x *with* a MAC key use the old envelope, whose MAC isn't bound to the session ID, and an unsigned counter, so both are rejected by default. To migrate them, open the store once with `{ allowLegacyFormat: true }`, then load and save each session — saving rewrites it in the current format — and switch the flag back off:
+- Files written by 2.1.x *with* a MAC key, or by 2.2.0, use the old envelope, whose MAC isn't bound to the session ID, and an unsigned counter, so both are rejected by default. To migrate them, open the store once with `{ allowLegacyFormat: true }`, then load and save each session — saving rewrites it in the current format — and switch the flag back off:
 
 ```typescript
 const migrating = new FileRatchetStore(dir, macKey32, { allowLegacyFormat: true });
@@ -390,7 +391,7 @@ for (const sessionId of yourSessionIds) {
 // From here on, construct the store without allowLegacyFormat.
 ```
 
-- Files written by 2.1.x *without* a MAC key no longer load. Re-sign them once, before switching your app to 2.2.0, with a script like this:
+- Files written by 2.1.x *without* a MAC key no longer load. Re-sign them once, before switching your app to 2.2.1, with a script like this:
 
 ```typescript
 import { readdirSync, readFileSync, copyFileSync } from 'node:fs';
