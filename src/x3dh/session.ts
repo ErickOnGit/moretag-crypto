@@ -11,23 +11,27 @@ import { ratchetInit, type RatchetState } from "../ratchet/ratchet.js";
 import { timingSafeEqual } from "../crypto/validation.js";
 
 /**
- * Initiator helper that pins the recipient's X25519 identity key on first use.
- * If the identity changes later, it will throw unless the registry is configured to rotate.
+ * Initiator helper that pins the recipient's full (two-key) identity on first
+ * use. If the pinned identity later changes, it throws {@link IdentityMismatchError};
+ * accepting a new identity requires an explicit `trust.approveRotation(...)`.
+ *
+ * Pass `initiator_ik_sig_pub32` to publish the initiator's Ed25519 identity in
+ * the session_init so the responder can pin the initiator's full identity too.
  */
 export function x3dhInitiatorWithTrustV1(args: {
   sender_device_id: string;
   recipient_bundle: X3DHPrekeyBundleV1;
   initiator_ik_priv32: Uint8Array;
   initiator_ek_priv32?: Uint8Array;
+  initiator_ik_sig_pub32?: Uint8Array;
   trust: IdentityRegistry;
-  allowRotateIdentity?: boolean;
 }): { session_init: X3DHSessionInitV1; rk32: Uint8Array } {
-  const { trust, recipient_bundle, allowRotateIdentity, ...rest } = args;
-  trust.trust(
-    recipient_bundle.recipient_device_id,
-    recipient_bundle.ik_pub_b64,
-    allowRotateIdentity ? { allowRotate: true } : undefined
-  );
+  const { trust, recipient_bundle, ...rest } = args;
+  trust.assertOrPin({
+    device_id: recipient_bundle.recipient_device_id,
+    ik_pub_b64: recipient_bundle.ik_pub_b64,
+    ik_sig_pub_b64: recipient_bundle.ik_sig_pub_b64,
+  });
   return x3dhInitiatorV1({ ...rest, recipient_bundle });
 }
 
@@ -39,20 +43,24 @@ export function x3dhResponderWithPrekeysV1(args: {
   prekeys: X3DHPrekeyManagerV1;
   consumeOpk?: boolean;
   trust?: IdentityRegistry;
-  allowRotateIdentity?: boolean;
 }): { rk32: Uint8Array } {
-  const { session_init, prekeys, trust, allowRotateIdentity } = args;
+  const { session_init, prekeys, trust } = args;
   if (session_init.recipient_device_id !== prekeys.recipient_device_id) {
     throw new Error(
       `recipient_device_id mismatch: expected ${prekeys.recipient_device_id}, got ${session_init.recipient_device_id}`
     );
   }
   if (trust) {
-    trust.trust(
-      session_init.sender_device_id,
-      session_init.sender_ik_pub_b64,
-      allowRotateIdentity ? { allowRotate: true } : undefined
-    );
+    if (!session_init.sender_ik_sig_pub_b64) {
+      throw new Error(
+        "session_init.sender_ik_sig_pub_b64 is required to establish two-key identity trust"
+      );
+    }
+    trust.assertOrPin({
+      device_id: session_init.sender_device_id,
+      ik_pub_b64: session_init.sender_ik_pub_b64,
+      ik_sig_pub_b64: session_init.sender_ik_sig_pub_b64,
+    });
   }
 
   const recipient_ik_priv32 = prekeys.ik.priv32;
@@ -83,21 +91,21 @@ export function x3dhInitiatorBootstrapV1(args: {
   recipient_bundle: X3DHPrekeyBundleV1;
   initiator_ik_priv32: Uint8Array;
   initiator_ek_priv32?: Uint8Array;
+  initiator_ik_sig_pub32?: Uint8Array;
   trust?: IdentityRegistry;
-  allowRotateIdentity?: boolean;
 }): {
   session_init: X3DHSessionInitV1;
   rk32: Uint8Array;
   ratchet_state: RatchetState;
   initiator_ek_priv32: Uint8Array;
 } {
-  const { trust, allowRotateIdentity, ...rest } = args;
+  const { trust, ...rest } = args;
   if (trust) {
-    trust.trust(
-      rest.recipient_bundle.recipient_device_id,
-      rest.recipient_bundle.ik_pub_b64,
-      allowRotateIdentity ? { allowRotate: true } : undefined
-    );
+    trust.assertOrPin({
+      device_id: rest.recipient_bundle.recipient_device_id,
+      ik_pub_b64: rest.recipient_bundle.ik_pub_b64,
+      ik_sig_pub_b64: rest.recipient_bundle.ik_sig_pub_b64,
+    });
   }
 
   const initiatorEkPriv32 = rest.initiator_ek_priv32 ?? generateX25519Keypair().priv32;
@@ -140,7 +148,6 @@ export function x3dhResponderBootstrapV1(args: {
   prekeys: X3DHPrekeyManagerV1;
   consumeOpk?: boolean;
   trust?: IdentityRegistry;
-  allowRotateIdentity?: boolean;
 }): { rk32: Uint8Array; ratchet_state: RatchetState } {
   const { session_init, prekeys } = args;
   const { rk32 } = x3dhResponderWithPrekeysV1(args);
