@@ -802,6 +802,8 @@ describe('Session Lifecycle', () => {
   let archive: SessionArchive;
   
   beforeEach(() => {
+    // A fresh random MAC key is fine for a throwaway test store. In an app, load a
+    // persisted secret key instead, or saved sessions become unreadable after restart.
     manager = new SessionManager(new FileRatchetStore('/tmp/test', randomBytes(32)));
     archive = new SessionArchive();
   });

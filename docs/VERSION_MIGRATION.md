@@ -353,6 +353,74 @@ function ratchetDecrypt(args: any) {
 
 ## Stored Session Migration
 
+### FileRatchetStore: MAC key now required (package 2.2.0)
+
+This is a storage change only; the ratchet protocol and wire format are unchanged.
+
+**What changed**
+
+- The constructor changed from `new FileRatchetStore(dir, { macKey32 })` to `new FileRatchetStore(dir, macKey32)`. The key is required and must be a 32-byte `Uint8Array`; anything else throws a `TypeError`.
+- Every session file is signed. `load()` throws `Invalid session file: missing mac_b64` for files written without a MAC key, and `Corrupt session state: <field>` for signed files whose contents are malformed.
+
+**Upgrading call sites**
+
+```typescript
+import { FileRatchetStore } from 'moretag-crypto/node';
+
+// Before (2.1.x): MAC was optional
+const store = new FileRatchetStore(dir, { macKey32 });
+
+// After (2.2.0): MAC key is a required positional argument
+const store = new FileRatchetStore(dir, macKey32);
+```
+
+Load `macKey32` from a persistent secret (OS keychain, secret manager, encrypted config). Do not generate it with `randomBytes(32)` at startup: a key that changes between runs makes every stored session unreadable.
+
+**Existing session files**
+
+- Files written by 2.1.x *with* a MAC key load unchanged with the same key.
+- Files written by 2.1.x *without* a MAC key no longer load. Re-sign them once, before switching your app to 2.2.0, with a script like this:
+
+```typescript
+import { readdirSync, readFileSync, copyFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { FileRatchetStore } from 'moretag-crypto/node';
+import type { PersistedSession } from 'moretag-crypto';
+
+function resignLegacySessions(dir: string, macKey32: Uint8Array): void {
+  const store = new FileRatchetStore(dir, macKey32);
+  for (const name of readdirSync(dir)) {
+    if (!name.endsWith('.json')) continue;
+    const file = join(dir, name);
+    const raw = JSON.parse(readFileSync(file, 'utf-8'));
+    if (typeof raw.mac_b64 === 'string') continue; // already signed
+
+    copyFileSync(file, `${file}.bak`); // keep the original until you've verified
+    const s = raw.state;
+    const record: PersistedSession = {
+      version: raw.version,
+      state: {
+        version: s.version,
+        rk32: Uint8Array.from(s.rk32),
+        ck_s32: s.ck_s32 ? Uint8Array.from(s.ck_s32) : undefined,
+        ck_r32: s.ck_r32 ? Uint8Array.from(s.ck_r32) : undefined,
+        ns: s.ns,
+        nr: s.nr,
+        pn: s.pn,
+        dh_self: { priv32: Uint8Array.from(s.dh_self.priv32), pub32: Uint8Array.from(s.dh_self.pub32) },
+        dh_remote_pub32: Uint8Array.from(s.dh_remote_pub32),
+        skipped: new Map(s.skipped.map(([k, v]: [string, number[]]) => [k, Uint8Array.from(v)])),
+      },
+    };
+    const sessionId = name.slice(0, -'.json'.length);
+    store.save(sessionId, record); // same version as on disk, so the rollback counter accepts it
+    store.load(sessionId);         // throws if anything didn't round-trip
+  }
+}
+```
+
+Only run this on files you trust: it signs whatever is on disk, so a file that was tampered with before migration becomes "valid". If you can't vouch for the old files, discard them and re-establish those sessions with a fresh X3DH handshake instead.
+
 ### Automatic Upgrade (Not Recommended)
 
 ```typescript
