@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, copyFileSync } from "fs";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, copyFileSync, unlinkSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { FileRatchetStore } from "./file-store.js";
@@ -312,5 +312,132 @@ describe("FileRatchetStore", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  describe("rollback counter", () => {
+    function setup(opts?: { allowLegacyFormat?: boolean }) {
+      const dir = mkdtempSync(join(tmpdir(), "ratchet-store-"));
+      const macKey32 = randomBytes(32);
+      const store = new FileRatchetStore(dir, macKey32, opts);
+      const state = newState();
+      return { dir, macKey32, store, state };
+    }
+
+    it("is written as a signed record", () => {
+      const { dir, store, state } = setup();
+      try {
+        store.save("sess", { version: 5, state });
+        const counter = JSON.parse(readFileSync(join(dir, "sess.ver"), "utf-8"));
+        expect(counter).toMatchObject({ v: 2, version: 5 });
+        expect(typeof counter.mac_b64).toBe("string");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("rejects loading a session whose counter was deleted", () => {
+      const { dir, store, state } = setup();
+      try {
+        store.save("sess", { version: 3, state });
+        unlinkSync(join(dir, "sess.ver"));
+        expect(() => store.load("sess")).toThrow(/Rollback counter missing/);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("detects restoring an old session file after the counter was deleted", () => {
+      const { dir, store, state } = setup();
+      try {
+        store.save("sess", { version: 1, state });
+        const oldFile = readFileSync(join(dir, "sess.json"), "utf-8");
+        store.save("sess", { version: 2, state });
+
+        writeFileSync(join(dir, "sess.json"), oldFile, "utf-8");
+        expect(() => store.load("sess")).toThrow(/Rollback detected/);
+
+        unlinkSync(join(dir, "sess.ver"));
+        expect(() => store.load("sess")).toThrow(/Rollback counter missing/);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("rejects an edited counter", () => {
+      const { dir, store, state } = setup();
+      try {
+        store.save("sess", { version: 4, state });
+        const p = join(dir, "sess.ver");
+        const counter = JSON.parse(readFileSync(p, "utf-8"));
+        counter.version = 0;
+        writeFileSync(p, JSON.stringify(counter), "utf-8");
+        expect(() => store.load("sess")).toThrow(/rollback counter: MAC verification failed/);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("rejects a counter copied from another session", () => {
+      const { dir, store, state } = setup();
+      try {
+        store.save("a", { version: 1, state });
+        store.save("b", { version: 9, state });
+        copyFileSync(join(dir, "a.ver"), join(dir, "b.ver"));
+        expect(() => store.load("b")).toThrow(/rollback counter: MAC verification failed/);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("rejects garbage and the legacy plain-number format by default", () => {
+      const { dir, store, state } = setup();
+      try {
+        store.save("sess", { version: 2, state });
+        const p = join(dir, "sess.ver");
+
+        writeFileSync(p, "not json", "utf-8");
+        expect(() => store.load("sess")).toThrow(/Invalid rollback counter file/);
+        expect(() => store.save("sess", { version: 3, state })).toThrow(/Invalid rollback counter file/);
+
+        writeFileSync(p, "0", "utf-8");
+        expect(() => store.load("sess")).toThrow(/Legacy rollback counter format/);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("migrates a legacy plain-number counter when allowLegacyFormat is set", () => {
+      const { dir, macKey32, store, state } = setup({ allowLegacyFormat: true });
+      try {
+        store.save("sess", { version: 2, state });
+        const p = join(dir, "sess.ver");
+
+        writeFileSync(p, "3", "utf-8");
+        expect(() => store.load("sess")).toThrow(/Rollback detected/); // still enforced
+
+        writeFileSync(p, "2", "utf-8");
+        const loaded = store.load("sess")!;
+        store.save("sess", loaded);
+        expect(JSON.parse(readFileSync(p, "utf-8")).v).toBe(2);
+        expect(new FileRatchetStore(dir, macKey32).load("sess")!.version).toBe(2);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("recovers from a crash during a session's first save", () => {
+      const { dir, store, state } = setup();
+      try {
+        // First save writes the counter before the session file. Simulate a crash in between.
+        store.save("sess", { version: 1, state });
+        unlinkSync(join(dir, "sess.json"));
+
+        expect(store.load("sess")).toBeUndefined();
+        store.save("sess", { version: 1, state }); // retry succeeds
+        expect(store.load("sess")!.version).toBe(1);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
   });
 });

@@ -22,13 +22,15 @@ import { MAX_SESSION_ID_BYTES } from "../crypto/limits.js";
 const ENVELOPE_VERSION = 2;
 /** Domain-separation prefix for session-file MACs (envelope v2). */
 const SESSION_MAC_CONTEXT = "moretag-crypto/file-store/session/v2";
+/** Domain-separation prefix for rollback-counter MACs. */
+const COUNTER_MAC_CONTEXT = "moretag-crypto/file-store/counter/v2";
 
 export interface FileRatchetStoreOptions {
   /**
-   * Also accept session files in the 2.1.x format, whose MAC covers only the payload and is
-   * not bound to the session ID (so a file could be copied over another session's file and
-   * still verify). Meant for a one-time migration: load and re-save each session with this
-   * enabled, which rewrites it in the current format, then turn it off. Default: false.
+   * Also accept files in the 2.1.x format: session files whose MAC covers only the payload
+   * and is not bound to the session ID, and unsigned plain-number rollback counters. Meant for
+   * a one-time migration: load and re-save each session with this enabled, which rewrites both
+   * files in the current format, then turn it off. Default: false.
    */
   allowLegacyFormat?: boolean;
 }
@@ -146,20 +148,71 @@ export class FileRatchetStore implements RatchetSessionStore {
     }
   }
 
+  private counterMacInput(sessionId: string, version: number): Uint8Array {
+    return new TextEncoder().encode(`${COUNTER_MAC_CONTEXT}\0${sessionId}\0${version}`);
+  }
+
+  /**
+   * Reads the rollback counter. Returns undefined only when the file doesn't exist; a file that
+   * exists but is malformed or fails its MAC throws, so it can't be edited to disable the check.
+   */
   private readCounter(sessionId: string): number | undefined {
     const p = this.versionPath(sessionId);
     if (!existsSync(p)) return undefined;
+
+    let parsed: unknown;
     try {
-      const v = Number(readFileSync(p, "utf-8"));
-      return Number.isFinite(v) ? v : undefined;
+      parsed = JSON.parse(readFileSync(p, "utf-8"));
     } catch {
-      return undefined;
+      throw new Error("Invalid rollback counter file");
     }
+
+    if (typeof parsed === "number") {
+      // 2.1.x wrote the counter as a bare, unsigned number.
+      if (!this.opts.allowLegacyFormat) {
+        throw new Error(
+          "Legacy rollback counter format (unsigned); " +
+            "construct the store with { allowLegacyFormat: true } once to migrate it"
+        );
+      }
+      if (!Number.isInteger(parsed) || parsed < 0) throw new Error("Invalid rollback counter file");
+      return parsed;
+    }
+
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed) ||
+      !("v" in parsed) ||
+      parsed.v !== ENVELOPE_VERSION ||
+      !("version" in parsed) ||
+      typeof parsed.version !== "number" ||
+      !Number.isInteger(parsed.version) ||
+      parsed.version < 0 ||
+      !("mac_b64" in parsed) ||
+      typeof parsed.mac_b64 !== "string"
+    ) {
+      throw new Error("Invalid rollback counter file");
+    }
+
+    this.verifyMac(
+      "rollback counter",
+      parsed.mac_b64,
+      this.counterMacInput(sessionId, parsed.version)
+    );
+    return parsed.version;
   }
 
   private writeCounter(sessionId: string, version: number): void {
     const p = this.versionPath(sessionId);
-    atomicWrite(p, String(version));
+    atomicWrite(
+      p,
+      JSON.stringify({
+        v: ENVELOPE_VERSION,
+        version,
+        mac_b64: this.computeMac(this.counterMacInput(sessionId, version)),
+      })
+    );
   }
 
   private encodeRecord(record: PersistedSession): { version: number; state: any } {
@@ -286,6 +339,11 @@ export class FileRatchetStore implements RatchetSessionStore {
     const payload = parsed.payload;
 
     const counter = this.readCounter(sessionId);
+    if (counter === undefined && parsed.v === ENVELOPE_VERSION) {
+      // saveUnlocked always leaves a counter behind once a session file exists, so a missing
+      // one means it was deleted — which would otherwise switch off rollback detection.
+      throw new Error("Rollback counter missing for session");
+    }
     if (counter !== undefined && payload.version < counter) {
       throw new Error("Rollback detected: session version behind persisted counter");
     }
@@ -332,8 +390,17 @@ export class FileRatchetStore implements RatchetSessionStore {
       mac_b64: this.computeMac(this.sessionMacInput(sessionId, payloadJson)),
     });
 
-    atomicWrite(file, toWrite);
-    this.writeCounter(sessionId, record.version);
+    // Write order keeps a crash from leaving a session unloadable. For a new session, write the
+    // counter first: a crash before the session file lands leaves no session (load returns
+    // undefined), never a session without a counter. For an existing session, write the session
+    // first: a crash before the counter lands leaves the counter behind the session, which loads.
+    if (!existsSync(file)) {
+      this.writeCounter(sessionId, record.version);
+      atomicWrite(file, toWrite);
+    } else {
+      atomicWrite(file, toWrite);
+      this.writeCounter(sessionId, record.version);
+    }
   }
 
   save(sessionId: string, record: PersistedSession): void {
