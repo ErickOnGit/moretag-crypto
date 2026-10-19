@@ -795,13 +795,16 @@ async function broadcastForceRekeyMessage(reason: string): Promise<void> {
 
 ```typescript
 import { describe, it, expect, beforeEach } from 'vitest';
+import { randomBytes } from '@noble/ciphers/utils.js';
 
 describe('Session Lifecycle', () => {
   let manager: SessionManager;
   let archive: SessionArchive;
   
   beforeEach(() => {
-    manager = new SessionManager(new FileRatchetStore('/tmp/test'));
+    // A fresh random MAC key is fine for a throwaway test store. In an app, load a
+    // persisted secret key instead, or saved sessions become unreadable after restart.
+    manager = new SessionManager(new FileRatchetStore('/tmp/test', randomBytes(32)));
     archive = new SessionArchive();
   });
   
