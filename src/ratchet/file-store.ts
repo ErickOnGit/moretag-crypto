@@ -16,7 +16,7 @@ import { hmac } from "@noble/hashes/hmac.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToBase64, decodeStrictBase64 } from "../encoding/base64.js";
 import { assertBoundedString } from "../crypto/validation.js";
-import { MAX_SESSION_ID_BYTES } from "../crypto/limits.js";
+import { MAX_SESSION_ID_BYTES, MAX_SKIPPED_KEYS } from "../crypto/limits.js";
 
 /** Current on-disk envelope format: MAC is bound to the session ID. */
 const ENVELOPE_VERSION = 2;
@@ -91,6 +91,12 @@ function assertSafeSessionId(sessionId: string): void {
     throw new TypeError("sessionId must not be '.' or '..'");
   }
 }
+
+/**
+ * Skipped-key IDs are `${base64(32-byte DH public key)}:${message number}`, as produced by the
+ * ratchet. Anything else can never match an incoming message and only takes up space.
+ */
+const SKIPPED_KEY_ID = /^[A-Za-z0-9+/]{43}=:(0|[1-9][0-9]{0,15})$/;
 
 function isSessionEnvelope(v: unknown): v is SessionEnvelope {
   return (
@@ -274,11 +280,17 @@ export class FileRatchetStore implements RatchetSessionStore {
 
     if (!Array.isArray(state.skipped)) fail("state.skipped");
     const skipped = state.skipped as unknown[];
+    // The ratchet never holds more than MAX_SKIPPED_KEYS, so a larger list wasn't written by it.
+    if (skipped.length > MAX_SKIPPED_KEYS) fail("state.skipped (too many entries)");
+    const seen = new Set<string>();
     for (let i = 0; i < skipped.length; i++) {
       const entry = skipped[i];
       if (!Array.isArray(entry) || entry.length !== 2) fail(`state.skipped[${i}]`);
       const [key, value] = entry as [unknown, unknown];
-      if (typeof key !== "string") fail(`state.skipped[${i}][0]`);
+      if (typeof key !== "string" || !SKIPPED_KEY_ID.test(key)) fail(`state.skipped[${i}][0]`);
+      // Duplicates would be silently collapsed by the Map on load.
+      if (seen.has(key as string)) fail(`state.skipped[${i}][0] (duplicate)`);
+      seen.add(key as string);
       if (!isSerializedByteArray32(value)) fail(`state.skipped[${i}][1]`);
     }
   }

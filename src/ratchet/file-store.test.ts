@@ -10,6 +10,7 @@ import { randomBytes } from "@noble/ciphers/utils.js";
 import { hmac } from "@noble/hashes/hmac.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToBase64 } from "../encoding/base64.js";
+import { MAX_SKIPPED_KEYS } from "../crypto/limits.js";
 
 function encode(str: string): Uint8Array {
   return new TextEncoder().encode(str);
@@ -435,6 +436,101 @@ describe("FileRatchetStore", () => {
         expect(store.load("sess")).toBeUndefined();
         store.save("sess", { version: 1, state }); // retry succeeds
         expect(store.load("sess")!.version).toBe(1);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe("skipped message keys on load", () => {
+    /** Rewrites the stored payload's skipped list and re-signs it, as a key holder could. */
+    function storeWithSkipped(skipped: unknown) {
+      const dir = mkdtempSync(join(tmpdir(), "ratchet-store-"));
+      const macKey32 = randomBytes(32);
+      const store = new FileRatchetStore(dir, macKey32);
+      store.save("sess", createPersistedSession(newState()));
+      const p = join(dir, "sess.json");
+      const envelope = JSON.parse(readFileSync(p, "utf-8"));
+      envelope.payload.state.skipped = skipped;
+      envelope.mac_b64 = macV2(macKey32, "sess", envelope.payload);
+      writeFileSync(p, JSON.stringify(envelope), "utf-8");
+      return { dir, store };
+    }
+    const keyId = (n: number) => `${bytesToBase64(randomBytes(32))}:${n}`;
+    const mk = () => Array.from(randomBytes(32));
+
+    it("loads skipped keys written by the ratchet", () => {
+      const dir = mkdtempSync(join(tmpdir(), "ratchet-store-"));
+      try {
+        const root = randomBytes(32);
+        const aliceDh = generateX25519Keypair();
+        const bobDh = generateX25519Keypair();
+        let alice = ratchetInit({ rk32: root, selfDh: aliceDh, remoteDhPub32: bobDh.pub32, sendingFirst: true });
+        let bob = ratchetInit({ rk32: root, selfDh: bobDh, remoteDhPub32: aliceDh.pub32, sendingFirst: false });
+        const sent = [];
+        for (let i = 0; i < 4; i++) {
+          const r = ratchetEncrypt({
+            state: alice,
+            plaintext: encode(`m${i}`),
+            sender_device_id: "alice",
+            recipient_device_id: "bob",
+          });
+          alice = r.state;
+          sent.push(r);
+        }
+        // Decrypting the 4th message first makes Bob store keys for messages 0..2.
+        bob = ratchetDecrypt({
+          state: bob,
+          header: sent[3]!.header,
+          ciphertext_b64: sent[3]!.ciphertext_b64,
+        }).state;
+        expect(bob.skipped.size).toBe(3);
+
+        const store = new FileRatchetStore(dir, randomBytes(32));
+        store.save("bob", createPersistedSession(bob));
+        expect(store.load("bob")!.state.skipped.size).toBe(3);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("accepts exactly MAX_SKIPPED_KEYS entries", () => {
+      const entries = Array.from({ length: MAX_SKIPPED_KEYS }, (_, i) => [keyId(i), mk()]);
+      const { dir, store } = storeWithSkipped(entries);
+      try {
+        expect(store.load("sess")!.state.skipped.size).toBe(MAX_SKIPPED_KEYS);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("rejects more than MAX_SKIPPED_KEYS entries", () => {
+      const entries = Array.from({ length: MAX_SKIPPED_KEYS + 1 }, (_, i) => [keyId(i), mk()]);
+      const { dir, store } = storeWithSkipped(entries);
+      try {
+        expect(() => store.load("sess")).toThrow(/state\.skipped \(too many entries\)/);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("rejects malformed skipped-key IDs", () => {
+      for (const bad of ["", "abc:1", `${bytesToBase64(randomBytes(32))}`, `${bytesToBase64(randomBytes(32))}:-1`,
+                         `${bytesToBase64(randomBytes(32))}:01`, `${bytesToBase64(randomBytes(16))}:1`]) {
+        const { dir, store } = storeWithSkipped([[bad, mk()]]);
+        try {
+          expect(() => store.load("sess"), bad).toThrow(/state\.skipped\[0\]\[0\]/);
+        } finally {
+          rmSync(dir, { recursive: true, force: true });
+        }
+      }
+    });
+
+    it("rejects duplicate skipped-key IDs", () => {
+      const id = keyId(7);
+      const { dir, store } = storeWithSkipped([[id, mk()], [id, mk()]]);
+      try {
+        expect(() => store.load("sess")).toThrow(/state\.skipped\[1\]\[0\] \(duplicate\)/);
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }
