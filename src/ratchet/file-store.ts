@@ -18,7 +18,23 @@ import { bytesToBase64, decodeStrictBase64 } from "../encoding/base64.js";
 import { assertBoundedString } from "../crypto/validation.js";
 import { MAX_SESSION_ID_BYTES } from "../crypto/limits.js";
 
+/** Current on-disk envelope format: MAC is bound to the session ID. */
+const ENVELOPE_VERSION = 2;
+/** Domain-separation prefix for session-file MACs (envelope v2). */
+const SESSION_MAC_CONTEXT = "moretag-crypto/file-store/session/v2";
+
+export interface FileRatchetStoreOptions {
+  /**
+   * Also accept session files in the 2.1.x format, whose MAC covers only the payload and is
+   * not bound to the session ID (so a file could be copied over another session's file and
+   * still verify). Meant for a one-time migration: load and re-save each session with this
+   * enabled, which rewrites it in the current format, then turn it off. Default: false.
+   */
+  allowLegacyFormat?: boolean;
+}
+
 interface SessionEnvelope {
+  v?: unknown;
   payload: unknown;
   mac_b64: string;
 }
@@ -88,7 +104,8 @@ function isSessionEnvelope(v: unknown): v is SessionEnvelope {
 export class FileRatchetStore implements RatchetSessionStore {
   constructor(
     private baseDir: string,
-    private macKey32: Uint8Array
+    private macKey32: Uint8Array,
+    private opts: FileRatchetStoreOptions = {}
   ) {
     if (!(macKey32 instanceof Uint8Array) || macKey32.byteLength !== 32) {
       throw new TypeError("macKey32 must be a 32-byte Uint8Array");
@@ -213,6 +230,15 @@ export class FileRatchetStore implements RatchetSessionStore {
     }
   }
 
+  /**
+   * MAC input for a session file. Binding the session ID means a validly signed file for one
+   * session cannot be copied over another session's file. Session IDs never contain NUL
+   * (enforced by assertSafeSessionId), so the encoding is unambiguous.
+   */
+  private sessionMacInput(sessionId: string, payloadJson: string): Uint8Array {
+    return new TextEncoder().encode(`${SESSION_MAC_CONTEXT}\0${sessionId}\0${payloadJson}`);
+  }
+
   private computeMac(bytes: Uint8Array): string {
     const mac = hmac(sha256, this.macKey32, bytes);
     return bytesToBase64(mac);
@@ -242,8 +268,20 @@ export class FileRatchetStore implements RatchetSessionStore {
       throw new Error("Invalid session file: missing mac_b64");
     }
 
-    const bytes = new TextEncoder().encode(JSON.stringify(parsed.payload));
-    this.verifyMac("mac_b64", parsed.mac_b64, bytes);
+    const payloadJson = JSON.stringify(parsed.payload);
+    if (parsed.v === ENVELOPE_VERSION) {
+      this.verifyMac("mac_b64", parsed.mac_b64, this.sessionMacInput(sessionId, payloadJson));
+    } else if (parsed.v === undefined) {
+      if (!this.opts.allowLegacyFormat) {
+        throw new Error(
+          "Legacy session file format (MAC not bound to session ID); " +
+            "construct the store with { allowLegacyFormat: true } once to migrate it"
+        );
+      }
+      this.verifyMac("mac_b64", parsed.mac_b64, new TextEncoder().encode(payloadJson));
+    } else {
+      throw new Error("Invalid session file: unsupported envelope version");
+    }
     this.validatePersistedStateShape(parsed.payload);
     const payload = parsed.payload;
 
@@ -289,8 +327,9 @@ export class FileRatchetStore implements RatchetSessionStore {
     const payloadJson = JSON.stringify(payloadObj);
 
     const toWrite = JSON.stringify({
+      v: ENVELOPE_VERSION,
       payload: payloadObj,
-      mac_b64: this.computeMac(new TextEncoder().encode(payloadJson)),
+      mac_b64: this.computeMac(this.sessionMacInput(sessionId, payloadJson)),
     });
 
     atomicWrite(file, toWrite);

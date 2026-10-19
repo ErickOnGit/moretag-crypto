@@ -360,7 +360,7 @@ This is a storage change only; the ratchet protocol and wire format are unchange
 **What changed**
 
 - The constructor changed from `new FileRatchetStore(dir, { macKey32 })` to `new FileRatchetStore(dir, macKey32)`. The key is required and must be a 32-byte `Uint8Array`; anything else throws a `TypeError`.
-- Every session file is signed. `load()` throws `Invalid session file: missing mac_b64` for files written without a MAC key, and `Corrupt session state: <field>` for signed files whose contents are malformed.
+- Every session file is signed, and the MAC now covers the session ID as well as the contents (envelope `v: 2`), so a file copied over another session's file fails to verify. `load()` throws `Invalid session file: missing mac_b64` for files written without a MAC key, `Legacy session file format` for files signed by 2.1.x, and `Corrupt session state: <field>` for signed files whose contents are malformed.
 
 **Upgrading call sites**
 
@@ -378,7 +378,17 @@ Load `macKey32` from a persistent secret (OS keychain, secret manager, encrypted
 
 **Existing session files**
 
-- Files written by 2.1.x *with* a MAC key load unchanged with the same key.
+- Files written by 2.1.x *with* a MAC key use the old envelope, whose MAC isn't bound to the session ID, and are rejected by default. To migrate them, open the store once with `{ allowLegacyFormat: true }`, then load and save each session — saving rewrites it in the current format — and switch the flag back off:
+
+```typescript
+const migrating = new FileRatchetStore(dir, macKey32, { allowLegacyFormat: true });
+for (const sessionId of yourSessionIds) {
+  const session = migrating.load(sessionId);
+  if (session) migrating.save(sessionId, session);
+}
+// From here on, construct the store without allowLegacyFormat.
+```
+
 - Files written by 2.1.x *without* a MAC key no longer load. Re-sign them once, before switching your app to 2.2.0, with a script like this:
 
 ```typescript
