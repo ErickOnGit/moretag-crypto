@@ -174,7 +174,7 @@ For production deployments, refer to these detailed guides:
 - **Storage**: `FileRatchetStore` (Node only) requires a 32-byte MAC key, signs every session file and a rollback counter, and refuses files that are unsigned, tampered with, malformed or older than their counter. It does not stop the restore of both files; use storage with rollback resistance for that threat. Keep the MAC key secret and stable.
 - **Identity**: two-key pinning on first use. The initiator pins after verifying the bundle; the responder checks with `IdentityRegistry.check` and pins only after the first message decrypts.
 - **No backup of private crypto state**: restoring one would bring back deleted one-time prekeys and roll ratchets back.
-- **Vectors**: `vectors/` holds independent known-answer vectors; `npm run vectors:check` must stay byte-identical.
+- **Vectors**: five files in `vectors/` (`primitives.json`, `x3dh-v2.json`, `ratchet-v2.json`, `aead-edges.json`, `spk-sig-msg-v1-independent.json`) are independent known-answer vectors from `scripts/gen-vectors-v2.mjs`, which uses only Node's `crypto`, `fs` and `path`; `npm run vectors:check` must keep them byte-identical. `opk-batch-sig-msg-v1.json` is written by the library and checked against the generator's CBOR encoder and node:crypto; `spk-sig-msg-v1.json` is the unchanged v1 file. See `docs/SPEC.md` §18.
 
 ## Security
 
@@ -191,7 +191,7 @@ This library implements cryptographic protocols. Please:
 - `src/ratchet/` - Double Ratchet state machine and persistence adapters
 - `src/identity/` - Identity pinning and trust management utilities
 - `src/encoding/` - Base64 and shortest-form CBOR
-- `scripts/` and `vectors/` - The independent vector generator and its files
+- `scripts/` and `vectors/` - The independent vector generator, its five files, and the library's two signature-message golden files (`docs/SPEC.md` §18)
 
 ## License
 

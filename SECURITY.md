@@ -37,9 +37,12 @@ security of the crypto backend a host registers beyond what the self-test checks
 
 Four runtime dependencies (`@noble/ciphers`, `@noble/curves`, `@noble/hashes`,
 `cbor-x`). Dependabot raises alerts and opens update pull requests; each is
-reviewed and none merges automatically. CI runs `npm audit` weekly. The test
-vectors are written by a generator that uses only Node's own `crypto`, `fs` and
-`path`.
+reviewed and none merges automatically. CI runs `npm audit` weekly. Five of the
+seven test vector files are written by an independent generator that uses only
+Node's own `crypto`, `fs` and `path`; the one-time prekey batch file is written
+by the library and checked against that generator's CBOR encoder and
+node:crypto, and `spk-sig-msg-v1.json` is the unchanged v1 file
+(`docs/SPEC.md` §18).
 
 ## Known limits
 

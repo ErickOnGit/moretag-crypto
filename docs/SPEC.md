@@ -555,10 +555,17 @@ at the primitive level (RFC and draft vectors in `vectors/primitives.json`).
   The files' JSON field names, role names and skipped-key layout are the author's
   own; the tests map them. Only the bytes that enter a KDF, a signature or an AEAD
   are normative.
-- `vectors/spk-sig-msg-v1.json`: the signed-prekey message, unchanged since v1;
-  the app's and the server's golden-vector tests share its bytes.
+- `vectors/spk-sig-msg-v1.json`: the library's v1 golden file for the
+  signed-prekey message, unchanged.
 - `vectors/opk-batch-sig-msg-v1.json`: the one-time prekey batch message and
-  signature, for the server's and the app's copies.
+  signature, written by the library (`buildOpkBatchSigMessage`) and checked
+  against the independent generator's CBOR encoder and node:crypto, for the
+  server's and the app's copies to reproduce.
+- The app and the server pin their own vectors, which are none of these files:
+  the signed-prekey vector (device `5a0b6f2e-…`, keys `07a37cbc…` and `64b101b1…`)
+  and the server's batch vector (RFC 8032 §7.1 test 1's key).
+  `src/vectors/signature-messages.test.ts` reproduces both messages and
+  signatures with the library, from copied values; the copies change together.
 
 The vector tests run through the public API, once per provider, with a scripted
 randomness provider (real randomness until registration, then one ordered queue

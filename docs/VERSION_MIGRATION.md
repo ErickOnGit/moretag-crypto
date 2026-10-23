@@ -44,6 +44,8 @@ This rule fits a product before its first public release, with no customers to c
 - Bundles, session_init, the header, the serialized state and the prekey record are v2.
 - One-time prekeys are served by the server, read without being consumed, and deleted by the host after the first decrypt; batches are signed.
 - Removed with no replacement: `allowLegacyFormat`, the archive seal (`sealArchiveV1`, `openArchiveV1`), `ratchetInit`, `advanceDh`, `consumeOneTimePrekey`, `addOneTimePrekeys`, the v1 bootstraps and validators.
+- Every refusal a peer or the server can cause is typed (SPEC §11): a gap over 1,000 is `SkipLimitError` (`skip_limit_exceeded`), a `ciphertext_b64` that is not strict base64 or is too large is `InvalidWireError` (`invalid_header`), and a header on the initiator's signed-prekey key before any reply is `decrypt_failed`. `FileRatchetStore` throws `StoreIoError` (`store_io`) for any file-system failure.
+- `IdentityRegistry.fromState(state)` reads the registry back and checks every field ("Corrupt identity state: <field>"). `new IdentityRegistry(state)` runs the same checks and is deprecated; call `fromState`.
 
 Unchanged: the signed-prekey signature message and its golden vector `vectors/spk-sig-msg-v1.json`, `sealAttachmentV1` / `openAttachmentV1`, `deriveDirectionScopedSessionIdV1`, the identity registry's stored format (`IdentityRegistryStateV1`), the `FileRatchetStore` envelope and MAC scheme.
 
