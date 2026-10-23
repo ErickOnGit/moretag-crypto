@@ -21,10 +21,12 @@
  *   decrypt must throw on authentication failure.
  * - randomBytes must be a CSPRNG. Registration rejects providers without one.
  *
- * registerCryptoPrimitives() runs known-answer self-tests on every supplied
- * primitive against the built-in reference implementation and throws (leaving
- * the previous provider active) on any mismatch, so a subtly incompatible
- * native implementation can never silently corrupt sessions or stored data.
+ * registerCryptoPrimitives() self-tests every supplied primitive and throws
+ * (leaving the previous provider active) on any mismatch: each must reproduce
+ * published test vectors (RFC 7748, RFC 8032, RFC 5869, the XChaCha draft) and
+ * match the built-in @noble implementation on fixed inputs at the sizes the
+ * protocol uses (see selfTest). That catches a backend that is wrong on those
+ * inputs; it cannot prove a backend right on every input.
  */
 
 import { x25519, ed25519 } from "@noble/curves/ed25519.js";
@@ -32,6 +34,13 @@ import { xchacha20poly1305 } from "@noble/ciphers/chacha.js";
 import { randomBytes as nobleRandomBytes } from "@noble/ciphers/utils.js";
 import { hkdf } from "@noble/hashes/hkdf.js";
 import { sha256 } from "@noble/hashes/sha2.js";
+import {
+  RFC5869_A1,
+  RFC5869_A3,
+  RFC7748_6_1,
+  RFC8032_7_1_TEST1,
+  XCHACHA_DRAFT03_A3_1,
+} from "./known-answers.js";
 
 /**
  * A full set of low-level primitives. All functions are synchronous and
@@ -142,13 +151,35 @@ function fixedBytes(length: number, seed: number): Uint8Array {
   return out;
 }
 
+function clamped(scalar: Uint8Array): Uint8Array {
+  const k = scalar.slice();
+  k[0] = (k[0] ?? 0) & 248;
+  k[31] = ((k[31] ?? 0) & 127) | 64;
+  return k;
+}
+
+/** True when fn returns without throwing. */
+function completes(fn: () => unknown): boolean {
+  try {
+    fn();
+  } catch {
+    return false;
+  }
+  return true;
+}
+
 /**
- * Self-tests a provider against the built-in reference implementation on
- * fixed inputs. Throws with a descriptive message on the first divergence.
- * All covered primitives are deterministic, so any byte difference here would
- * mean cross-platform ciphertext/key divergence — i.e. unrecoverable message
- * loss once one-time ratchet keys are involved. Cost is a handful of
- * operations, run once at registration.
+ * Self-tests a provider at registration. Every supplied primitive must reproduce
+ * the published constants in known-answers.ts (RFC 7748 §6.1, RFC 8032 §7.1
+ * test 1, RFC 5869 A.1 with its 32-byte prefix and A.3, draft-irtf-cfrg-xchacha-03
+ * A.3.1), and must match the built-in @noble implementation on fixed inputs at
+ * the sizes the protocol uses: HKDF at 32 bytes with a 32-byte zero salt and 128-
+ * or 160-byte input (X3DH), at 64 bytes with a 32-byte or empty salt (root and
+ * chain steps); AEAD with an empty AAD, an empty plaintext and 16,500 bytes.
+ * Every covered primitive is deterministic, so a byte difference would mean keys
+ * or ciphertext that other backends cannot read. Throws on the first divergence.
+ * This catches a backend that is wrong on these inputs; it cannot prove a backend
+ * right on every input. Cost is a few dozen operations, run once at registration.
  */
 function selfTest(p: CryptoPrimitivesProvider): void {
   const fail = (what: string): never => {
@@ -172,17 +203,15 @@ function selfTest(p: CryptoPrimitivesProvider): void {
     );
   }
 
-  // Clamped fixed scalar (matches what the wrappers pass at runtime).
-  const scalarA = fixedBytes(32, 11);
-  scalarA[0] = (scalarA[0] ?? 0) & 248;
-  scalarA[31] = ((scalarA[31] ?? 0) & 127) | 64;
-  const scalarB = fixedBytes(32, 42);
-  scalarB[0] = (scalarB[0] ?? 0) & 248;
-  scalarB[31] = ((scalarB[31] ?? 0) & 127) | 64;
-
+  // X25519. Scalars reach a provider already clamped (the contract above).
+  const scalarA = clamped(fixedBytes(32, 11));
+  const scalarB = clamped(fixedBytes(32, 42));
+  const x = RFC7748_6_1;
   if (p.x25519GetPublicKey) {
     if (
-      !eq(p.x25519GetPublicKey(scalarA), noblePrimitives.x25519GetPublicKey(scalarA))
+      !eq(p.x25519GetPublicKey(scalarA), noblePrimitives.x25519GetPublicKey(scalarA)) ||
+      !eq(p.x25519GetPublicKey(clamped(x.alicePriv)), x.alicePub) ||
+      !eq(p.x25519GetPublicKey(clamped(x.bobPriv)), x.bobPub)
     ) {
       fail("x25519GetPublicKey");
     }
@@ -193,20 +222,30 @@ function selfTest(p: CryptoPrimitivesProvider): void {
       !eq(
         p.x25519SharedSecret(scalarA, pubB),
         noblePrimitives.x25519SharedSecret(scalarA, pubB)
-      )
+      ) ||
+      !eq(p.x25519SharedSecret(clamped(x.alicePriv), x.bobPub), x.shared) ||
+      !eq(p.x25519SharedSecret(clamped(x.bobPriv), x.alicePub), x.shared)
     ) {
       fail("x25519SharedSecret");
     }
   }
 
+  // Ed25519.
   const seed = fixedBytes(32, 3);
   const msg = fixedBytes(64, 5);
   const refPub = noblePrimitives.ed25519GetPublicKey(seed);
   const refSig = noblePrimitives.ed25519Sign(seed, msg);
-  if (p.ed25519GetPublicKey && !eq(p.ed25519GetPublicKey(seed), refPub)) {
+  const ed = RFC8032_7_1_TEST1;
+  if (
+    p.ed25519GetPublicKey &&
+    (!eq(p.ed25519GetPublicKey(seed), refPub) || !eq(p.ed25519GetPublicKey(ed.seed), ed.pub))
+  ) {
     fail("ed25519GetPublicKey");
   }
-  if (p.ed25519Sign && !eq(p.ed25519Sign(seed, msg), refSig)) {
+  if (
+    p.ed25519Sign &&
+    (!eq(p.ed25519Sign(seed, msg), refSig) || !eq(p.ed25519Sign(ed.seed, ed.message), ed.sig))
+  ) {
     fail("ed25519Sign");
   }
   if (p.ed25519Verify) {
@@ -214,52 +253,75 @@ function selfTest(p: CryptoPrimitivesProvider): void {
     tampered[0] = (tampered[0] ?? 0) ^ 1;
     if (
       !p.ed25519Verify(refPub, msg, refSig) ||
-      p.ed25519Verify(refPub, msg, tampered)
+      p.ed25519Verify(refPub, msg, tampered) ||
+      !p.ed25519Verify(ed.pub, ed.message, ed.sig)
     ) {
       fail("ed25519Verify");
     }
   }
 
+  // XChaCha20-Poly1305: the published vector, then fixed inputs at the edges.
   const key = fixedBytes(32, 9);
   const nonce = fixedBytes(24, 13);
   const aad = fixedBytes(16, 17);
-  const pt = fixedBytes(100, 21);
-  const refCt = noblePrimitives.xchacha20poly1305Encrypt(key, nonce, pt, aad);
+  const aeadCases: Array<{ label: string; key: Uint8Array; nonce: Uint8Array; pt: Uint8Array; aad: Uint8Array }> = [
+    { label: "", key, nonce, pt: fixedBytes(100, 21), aad },
+    { label: " (empty AAD)", key, nonce, pt: fixedBytes(100, 23), aad: new Uint8Array(0) },
+    { label: " (empty plaintext)", key, nonce, pt: new Uint8Array(0), aad },
+    { label: " (16,500-byte plaintext)", key, nonce, pt: fixedBytes(16_500, 27), aad },
+  ];
+  const xc = XCHACHA_DRAFT03_A3_1;
   if (p.xchacha20poly1305Encrypt) {
-    if (!eq(p.xchacha20poly1305Encrypt(key, nonce, pt, aad), refCt)) {
-      fail("xchacha20poly1305Encrypt");
+    if (!eq(p.xchacha20poly1305Encrypt(xc.key, xc.nonce, xc.plaintext, xc.aad), xc.sealed)) {
+      fail("xchacha20poly1305Encrypt (draft-irtf-cfrg-xchacha-03 A.3.1)");
+    }
+    for (const c of aeadCases) {
+      const ref = noblePrimitives.xchacha20poly1305Encrypt(c.key, c.nonce, c.pt, c.aad);
+      if (!eq(p.xchacha20poly1305Encrypt(c.key, c.nonce, c.pt, c.aad), ref)) {
+        fail(`xchacha20poly1305Encrypt${c.label}`);
+      }
     }
   }
   if (p.xchacha20poly1305Decrypt) {
-    if (!eq(p.xchacha20poly1305Decrypt(key, nonce, refCt, aad), pt)) {
-      fail("xchacha20poly1305Decrypt");
+    if (!eq(p.xchacha20poly1305Decrypt(xc.key, xc.nonce, xc.sealed, xc.aad), xc.plaintext)) {
+      fail("xchacha20poly1305Decrypt (draft-irtf-cfrg-xchacha-03 A.3.1)");
     }
-    const tamperedCt = refCt.slice();
+    for (const c of aeadCases) {
+      const ref = noblePrimitives.xchacha20poly1305Encrypt(c.key, c.nonce, c.pt, c.aad);
+      if (!eq(p.xchacha20poly1305Decrypt(c.key, c.nonce, ref, c.aad), c.pt)) {
+        fail(`xchacha20poly1305Decrypt${c.label}`);
+      }
+    }
+    const tamperedCt = noblePrimitives.xchacha20poly1305Encrypt(key, nonce, fixedBytes(100, 21), aad);
     tamperedCt[0] = (tamperedCt[0] ?? 0) ^ 1;
-    let threw = false;
-    try {
-      p.xchacha20poly1305Decrypt(key, nonce, tamperedCt, aad);
-    } catch {
-      threw = true;
+    if (completes(() => p.xchacha20poly1305Decrypt!(key, nonce, tamperedCt, aad))) {
+      fail("xchacha20poly1305Decrypt (auth failure must throw)");
     }
-    if (!threw) fail("xchacha20poly1305Decrypt (auth failure must throw)");
   }
 
+  // HKDF-SHA256: the published vectors, then the protocol's shapes.
   if (p.hkdfSha256) {
-    const ikm = fixedBytes(32, 25);
-    const salt = fixedBytes(32, 29);
-    const info = fixedBytes(11, 31);
+    const a1 = RFC5869_A1;
+    const a3 = RFC5869_A3;
     if (
-      !eq(
-        p.hkdfSha256(ikm, salt, info, 64),
-        noblePrimitives.hkdfSha256(ikm, salt, info, 64)
-      ) ||
-      !eq(
-        p.hkdfSha256(ikm, new Uint8Array(0), info, 64),
-        noblePrimitives.hkdfSha256(ikm, new Uint8Array(0), info, 64)
-      )
+      !eq(p.hkdfSha256(a1.ikm, a1.salt, a1.info, a1.okm.length), a1.okm) ||
+      !eq(p.hkdfSha256(a1.ikm, a1.salt, a1.info, 32), a1.okm.subarray(0, 32)) ||
+      !eq(p.hkdfSha256(a3.ikm, a3.salt, a3.info, a3.okm.length), a3.okm)
     ) {
-      fail("hkdfSha256");
+      fail("hkdfSha256 (RFC 5869)");
+    }
+    const info = fixedBytes(11, 31);
+    const zeroSalt = new Uint8Array(32);
+    const hkdfCases: Array<[string, Uint8Array, Uint8Array, number]> = [
+      ["length 64", fixedBytes(32, 25), fixedBytes(32, 29), 64],
+      ["length 64, empty salt", fixedBytes(32, 25), new Uint8Array(0), 64],
+      ["length 32, 128-byte input", fixedBytes(128, 33), zeroSalt, 32],
+      ["length 32, 160-byte input", fixedBytes(160, 35), zeroSalt, 32],
+    ];
+    for (const [label, ikm, salt, length] of hkdfCases) {
+      if (!eq(p.hkdfSha256(ikm, salt, info, length), noblePrimitives.hkdfSha256(ikm, salt, info, length))) {
+        fail(`hkdfSha256 (${label})`);
+      }
     }
   }
 }
