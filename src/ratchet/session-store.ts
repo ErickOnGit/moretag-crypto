@@ -1,10 +1,22 @@
 import { ratchetEncrypt, ratchetDecrypt, type RatchetState } from "./ratchet.js";
+import { SessionNotFoundError } from "../errors.js";
 
 export interface PersistedSession {
   version: number;
   state: RatchetState;
 }
 
+/**
+ * Storage for ratchet sessions, keyed by session id.
+ *
+ * `transact`, when present, is the store's atomic read-modify-write, and the
+ * with-store helpers use it instead of `load` then `save`. Its contract:
+ * - It is atomic per session id: no other write to that id lands between the
+ *   read that produces `current` and the write of `fn`'s result.
+ * - A missing id throws {@link SessionNotFoundError} without calling `fn`.
+ * - If `fn` throws, nothing is persisted and the same error is rethrown.
+ * - Otherwise the store persists exactly the record `fn` returns, and returns it.
+ */
 export interface RatchetSessionStore {
   load(sessionId: string): Promise<PersistedSession | undefined> | PersistedSession | undefined;
   save(sessionId: string, record: PersistedSession): Promise<void> | void;
@@ -13,6 +25,10 @@ export interface RatchetSessionStore {
     fn: (current: PersistedSession) => PersistedSession
   ): Promise<PersistedSession> | PersistedSession;
 }
+
+/** Ratchet arguments for the with-store helpers: the store's record is the only state. */
+type EncryptWithStoreArgs = Omit<Parameters<typeof ratchetEncrypt>[0], "state">;
+type DecryptWithStoreArgs = Omit<Parameters<typeof ratchetDecrypt>[0], "state">;
 
 export function cloneRatchetState(state: RatchetState): RatchetState {
   return {
@@ -55,7 +71,7 @@ export class InMemoryRatchetStore implements RatchetSessionStore {
 
   transact(sessionId: string, fn: (current: PersistedSession) => PersistedSession): PersistedSession {
     const current = this.load(sessionId);
-    if (!current) throw new Error("Session not found");
+    if (!current) throw new SessionNotFoundError();
     const next = fn(current);
     this.save(sessionId, next);
     return next;
@@ -65,7 +81,7 @@ export class InMemoryRatchetStore implements RatchetSessionStore {
 export async function ratchetEncryptWithStore(
   store: RatchetSessionStore,
   sessionId: string,
-  args: Parameters<typeof ratchetEncrypt>[0]
+  args: EncryptWithStoreArgs
 ): Promise<{ header: ReturnType<typeof ratchetEncrypt>["header"]; ciphertext_b64: string }> {
   if (store.transact) {
     let out:
@@ -82,7 +98,7 @@ export async function ratchetEncryptWithStore(
   }
 
   const record = await store.load(sessionId);
-  if (!record) throw new Error("Session not found");
+  if (!record) throw new SessionNotFoundError();
   const state = cloneRatchetState(record.state);
   const { header, ciphertext_b64 } = ratchetEncrypt({ ...args, state });
   await store.save(sessionId, { version: record.version + 1, state });
@@ -92,7 +108,7 @@ export async function ratchetEncryptWithStore(
 export async function ratchetDecryptWithStore(
   store: RatchetSessionStore,
   sessionId: string,
-  args: Parameters<typeof ratchetDecrypt>[0]
+  args: DecryptWithStoreArgs
 ): Promise<{ plaintext: Uint8Array }> {
   if (store.transact) {
     let out: { plaintext: Uint8Array } | undefined;
@@ -107,7 +123,7 @@ export async function ratchetDecryptWithStore(
   }
 
   const record = await store.load(sessionId);
-  if (!record) throw new Error("Session not found");
+  if (!record) throw new SessionNotFoundError();
   const state = cloneRatchetState(record.state);
   const { plaintext } = ratchetDecrypt({ ...args, state });
   await store.save(sessionId, { version: record.version + 1, state });

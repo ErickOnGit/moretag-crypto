@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, copyFileSync, unlinkSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -11,6 +11,7 @@ import { hmac } from "@noble/hashes/hmac.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToBase64 } from "../encoding/base64.js";
 import { MAX_SKIPPED_KEYS } from "../crypto/limits.js";
+import { SessionNotFoundError } from "../errors.js";
 
 function encode(str: string): Uint8Array {
   return new TextEncoder().encode(str);
@@ -105,6 +106,18 @@ describe("FileRatchetStore", () => {
           ciphertext_b64,
         })
       ).toThrow();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("transact on a missing id is SessionNotFoundError and never calls fn", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ratchet-store-"));
+    try {
+      const store = new FileRatchetStore(dir, randomBytes(32));
+      const fn = vi.fn((current) => current);
+      expect(() => store.transact("missing", fn)).toThrow(SessionNotFoundError);
+      expect(fn).not.toHaveBeenCalled();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

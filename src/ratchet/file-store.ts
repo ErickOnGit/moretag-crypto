@@ -12,6 +12,7 @@ import {
 import { dirname, join } from "path";
 import type { PersistedSession, RatchetSessionStore } from "./session-store.js";
 import { cloneRatchetState } from "./session-store.js";
+import { SessionNotFoundError } from "../errors.js";
 import { hmac } from "@noble/hashes/hmac.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToBase64, decodeStrictBase64 } from "../encoding/base64.js";
@@ -422,7 +423,7 @@ export class FileRatchetStore implements RatchetSessionStore {
   transact(sessionId: string, fn: (current: PersistedSession) => PersistedSession): PersistedSession {
     return this.withLock(sessionId, () => {
       const current = this.loadUnlocked(sessionId);
-      if (!current) throw new Error("Session not found");
+      if (!current) throw new SessionNotFoundError();
       const next = fn(current);
       this.saveUnlocked(sessionId, next);
       return next;
