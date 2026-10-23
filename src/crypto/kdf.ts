@@ -6,6 +6,7 @@
  */
 
 import { hkdfSha256 } from "./hkdf.js";
+import { wipe } from "./wipe.js";
 
 const ENC = new TextEncoder();
 
@@ -33,7 +34,9 @@ export function kdfRootAndChainKey(
   const ikm = dhOut32;
 
   const derived = hkdfSha256(ikm, salt, info, 64);
-  return { rk32: derived.slice(0, 32), ck32: derived.slice(32, 64) };
+  const out = { rk32: derived.slice(0, 32), ck32: derived.slice(32, 64) };
+  wipe(derived);
+  return out;
 }
 
 /**
@@ -51,5 +54,7 @@ export function kdfChainKey(ck32: Uint8Array): {
   const ikm = ck32;
 
   const derived = hkdfSha256(ikm, salt, info, 64);
-  return { ck32: derived.slice(0, 32), mk32: derived.slice(32, 64) };
+  const out = { ck32: derived.slice(0, 32), mk32: derived.slice(32, 64) };
+  wipe(derived);
+  return out;
 }

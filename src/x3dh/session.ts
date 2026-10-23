@@ -16,6 +16,7 @@ import { bytesToBase64 } from "../encoding/base64.js";
 import type { IdentityRegistry } from "../identity/trust.js";
 import type { X3DHPrekeyManagerV2 } from "./prekey-manager.js";
 import { DeviceMismatchError, SelfSessionError } from "../errors.js";
+import { wipe } from "../crypto/wipe.js";
 import {
   ratchetInitInitiatorV2,
   ratchetInitResponderV2,
@@ -60,8 +61,12 @@ export function x3dhInitiatorBootstrapV2(args: {
     initiator_ik_priv32: args.initiator_ik_priv32,
     initiator_ik_sig_pub32: args.initiator_ik_sig_pub32,
   });
-  const ratchet_state = ratchetInitInitiatorV2({ sk32, ad, remoteSpkPub32: bundle.spk_pub32 });
-  return { session_init, ratchet_state };
+  try {
+    const ratchet_state = ratchetInitInitiatorV2({ sk32, ad, remoteSpkPub32: bundle.spk_pub32 });
+    return { session_init, ratchet_state };
+  } finally {
+    wipe(sk32);
+  }
 }
 
 /**
@@ -88,19 +93,26 @@ export function x3dhResponderBootstrapV2(args: {
   checkSessionInitDevicesV2(si, args.sender_device_id, args.recipient_device_id);
   if (args.prekeys.recipient_device_id !== args.recipient_device_id) throw new DeviceMismatchError();
 
+  // Copies from the manager, wiped below; the manager's own keys are never touched.
   const spk = args.prekeys.getSignedPrekey(si.spk_id);
-  const opkPriv32 = si.opk_id !== undefined ? args.prekeys.getOneTimePrekeyPriv32(si.opk_id) : undefined;
-
-  const { sk32, ad } = x3dhResponderFromDecoded({
-    session_init: si,
-    recipient_ik_priv32: args.prekeys.ik.priv32,
-    recipient_ik_sig_pub32: args.prekeys.ik_sig.pub32,
-    recipient_spk_priv32: spk.priv32,
-    recipient_opk_priv32: opkPriv32,
-  });
-  const ratchet_state = ratchetInitResponderV2({ sk32, ad, selfSpk: spk });
-  return {
-    ratchet_state,
-    used: { spk_id: si.spk_id, ...(si.opk_id !== undefined ? { opk_id: si.opk_id } : {}) },
-  };
+  let opkPriv32: Uint8Array | undefined;
+  let sk32: Uint8Array | undefined;
+  try {
+    opkPriv32 = si.opk_id !== undefined ? args.prekeys.getOneTimePrekeyPriv32(si.opk_id) : undefined;
+    const derived = x3dhResponderFromDecoded({
+      session_init: si,
+      recipient_ik_priv32: args.prekeys.ik.priv32,
+      recipient_ik_sig_pub32: args.prekeys.ik_sig.pub32,
+      recipient_spk_priv32: spk.priv32,
+      recipient_opk_priv32: opkPriv32,
+    });
+    sk32 = derived.sk32;
+    const ratchet_state = ratchetInitResponderV2({ sk32, ad: derived.ad, selfSpk: spk });
+    return {
+      ratchet_state,
+      used: { spk_id: si.spk_id, ...(si.opk_id !== undefined ? { opk_id: si.opk_id } : {}) },
+    };
+  } finally {
+    wipe(spk.priv32, opkPriv32, sk32);
+  }
 }

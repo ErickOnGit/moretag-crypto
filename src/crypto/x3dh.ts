@@ -22,6 +22,7 @@ import { hkdfSha256 } from "./hkdf.js";
 import { ed25519Verify } from "./ed25519.js";
 import { buildAssociatedDataV2 } from "./ad.js";
 import { assertCanonicalDeviceId } from "./device-id.js";
+import { wipe } from "./wipe.js";
 import {
   BadSignatureError,
   DeviceMismatchError,
@@ -100,12 +101,16 @@ export function buildOpkBatchSigMessage(args: {
   return encodeCbor([OPK_BATCH_SIGNATURE_DOMAIN, args.device_id, entries]);
 }
 
-/** SK from the DH outputs in order: HKDF over F || DH1 || ... (X3DH §2.2). */
+/** SK from the DH outputs in order: HKDF over F || DH1 || ... (X3DH §2.2). KM is wiped. */
 function deriveSk(dhOutputs: readonly Uint8Array[]): Uint8Array {
   const km = new Uint8Array(F_LENGTH + 32 * dhOutputs.length);
   km.fill(0xff, 0, F_LENGTH);
   dhOutputs.forEach((dh, i) => km.set(dh, F_LENGTH + 32 * i));
-  return hkdfSha256(km, X3DH_SALT, X3DH_INFO, 32);
+  try {
+    return hkdfSha256(km, X3DH_SALT, X3DH_INFO, 32);
+  } finally {
+    wipe(km);
+  }
 }
 
 /**
@@ -154,13 +159,17 @@ export function x3dhInitiatorFromVerifiedBundle(args: {
   });
 
   const ek = generateX25519Keypair();
-  const dhs = [
-    x25519SharedSecret(args.initiator_ik_priv32, b.spk_pub32),
-    x25519SharedSecret(ek.priv32, b.ik_pub32),
-    x25519SharedSecret(ek.priv32, b.spk_pub32),
-  ];
-  if (b.opk) dhs.push(x25519SharedSecret(ek.priv32, b.opk.pub32));
-  const sk32 = deriveSk(dhs);
+  const dhs: Uint8Array[] = [];
+  let sk32: Uint8Array;
+  try {
+    dhs.push(x25519SharedSecret(args.initiator_ik_priv32, b.spk_pub32));
+    dhs.push(x25519SharedSecret(ek.priv32, b.ik_pub32));
+    dhs.push(x25519SharedSecret(ek.priv32, b.spk_pub32));
+    if (b.opk) dhs.push(x25519SharedSecret(ek.priv32, b.opk.pub32));
+    sk32 = deriveSk(dhs);
+  } finally {
+    wipe(ek.priv32, ...dhs);
+  }
 
   const session_init: X3DHSessionInitV2 = {
     v: 2,
@@ -234,13 +243,17 @@ export function x3dhResponderFromDecoded(args: {
   }
   if (args.recipient_opk_priv32) key32("recipient_opk_priv32", args.recipient_opk_priv32);
 
-  const dhs = [
-    x25519SharedSecret(args.recipient_spk_priv32, si.sender_ik_pub32),
-    x25519SharedSecret(args.recipient_ik_priv32, si.ek_pub32),
-    x25519SharedSecret(args.recipient_spk_priv32, si.ek_pub32),
-  ];
-  if (args.recipient_opk_priv32) dhs.push(x25519SharedSecret(args.recipient_opk_priv32, si.ek_pub32));
-  const sk32 = deriveSk(dhs);
+  const dhs: Uint8Array[] = [];
+  let sk32: Uint8Array;
+  try {
+    dhs.push(x25519SharedSecret(args.recipient_spk_priv32, si.sender_ik_pub32));
+    dhs.push(x25519SharedSecret(args.recipient_ik_priv32, si.ek_pub32));
+    dhs.push(x25519SharedSecret(args.recipient_spk_priv32, si.ek_pub32));
+    if (args.recipient_opk_priv32) dhs.push(x25519SharedSecret(args.recipient_opk_priv32, si.ek_pub32));
+    sk32 = deriveSk(dhs);
+  } finally {
+    wipe(...dhs);
+  }
 
   const ad = buildAssociatedDataV2({
     initiator_ik_pub32: si.sender_ik_pub32,

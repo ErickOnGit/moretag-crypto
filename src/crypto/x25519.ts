@@ -6,6 +6,7 @@
 
 import { getPrimitives } from "./primitives.js";
 import { LowOrderKeyError } from "../errors.js";
+import { wipe } from "./wipe.js";
 
 function clampScalar(k: Uint8Array): void {
   if (k.length !== 32) throw new TypeError("clampScalar expects 32 bytes");
@@ -40,7 +41,11 @@ export function x25519PublicFromPrivate(priv32: Uint8Array): Uint8Array {
   }
   const k = priv32.slice();
   clampScalar(k);
-  return getPrimitives().x25519GetPublicKey(k);
+  try {
+    return getPrimitives().x25519GetPublicKey(k);
+  } finally {
+    wipe(k);
+  }
 }
 
 /**
@@ -75,6 +80,8 @@ export function x25519SharedSecret(
     ss = getPrimitives().x25519SharedSecret(k, pub32);
   } catch {
     throw new LowOrderKeyError();
+  } finally {
+    wipe(k);
   }
   if (ss.byteLength !== 32) {
     throw new TypeError(

@@ -17,6 +17,11 @@
  * draws one 32-byte DHs private exactly when the header's ratchet key differs from
  * DHr or DHr is absent, after the old chain's skipped keys are stored and the
  * receiving chain stepped, and nothing otherwise.
+ *
+ * Erasure (best effort, crypto/wipe.ts): DH outputs, message keys, evicted skipped
+ * keys, and the root and chain keys a decrypt replaces in its working copy are
+ * wiped, and so is the whole working copy when a decrypt fails. Arrays of the
+ * caller's state are replaced, never wiped: the library wipes only what it made.
  */
 
 import { generateX25519Keypair, x25519SharedSecret } from "../crypto/x25519.js";
@@ -39,6 +44,7 @@ import {
   MAX_CIPHERTEXT_BYTES,
 } from "../crypto/limits.js";
 import { timingSafeEqual } from "../crypto/validation.js";
+import { wipe } from "../crypto/wipe.js";
 import { DeviceMismatchError, NoSendingChainError, ReplayDetectedError } from "../errors.js";
 import { skippedKeyId } from "./skipped-id.js";
 
@@ -66,6 +72,12 @@ function assertKey32(label: string, key: Uint8Array): void {
   if (!(key instanceof Uint8Array) || key.byteLength !== 32) {
     throw new TypeError(`Invalid ${label} length: expected 32 bytes`);
   }
+}
+
+/** Wipes every secret array of a state this library made (a working copy). */
+function wipeRatchetState(state: RatchetState): void {
+  wipe(state.rk32, state.ck_s32, state.ck_r32, state.dh_self.priv32);
+  for (const mk of state.skipped.values()) wipe(mk);
 }
 
 /** A deep copy: no array is shared with the input. */
@@ -131,7 +143,10 @@ function assertState(state: RatchetState): void {
 function storeSkipped(state: RatchetState, dhPub32: Uint8Array, n: number, mk32: Uint8Array): void {
   if (state.skipped.size >= MAX_SKIPPED_KEYS) {
     const oldest = state.skipped.keys().next();
-    if (!oldest.done) state.skipped.delete(oldest.value);
+    if (!oldest.done) {
+      wipe(state.skipped.get(oldest.value));
+      state.skipped.delete(oldest.value);
+    }
   }
   state.skipped.set(skippedKeyId(dhPub32, n), mk32);
 }
@@ -145,22 +160,35 @@ function skipMessageKeys(state: RatchetState, until: number): void {
   while (state.nr < until) {
     const { ck32, mk32 } = kdfChainKey(state.ck_r32);
     storeSkipped(state, state.dh_remote_pub32, state.nr, mk32);
+    wipe(state.ck_r32);
     state.ck_r32 = ck32;
     state.nr += 1;
   }
 }
 
-/** DR §3.4 DHRatchet: one 32-byte draw for the new DHs. */
+/**
+ * DR §3.4 DHRatchet on a working copy: one 32-byte draw for the new DHs. The
+ * replaced root, chain and private keys belong to the copy and are wiped.
+ */
 function dhRatchetStep(state: RatchetState, remoteDhPub32: Uint8Array): void {
   state.pn = state.ns;
   state.ns = 0;
   state.nr = 0;
   state.dh_remote_pub32 = new Uint8Array(remoteDhPub32);
-  const recv = kdfRootAndChainKey(state.rk32, x25519SharedSecret(state.dh_self.priv32, remoteDhPub32));
+
+  const dhRecv = x25519SharedSecret(state.dh_self.priv32, remoteDhPub32);
+  const recv = kdfRootAndChainKey(state.rk32, dhRecv);
+  wipe(dhRecv, state.rk32, state.ck_r32);
   state.rk32 = recv.rk32;
   state.ck_r32 = recv.ck32;
+
+  const oldSelf = state.dh_self;
   state.dh_self = generateX25519Keypair();
-  const send = kdfRootAndChainKey(state.rk32, x25519SharedSecret(state.dh_self.priv32, remoteDhPub32));
+  wipe(oldSelf.priv32);
+
+  const dhSend = x25519SharedSecret(state.dh_self.priv32, remoteDhPub32);
+  const send = kdfRootAndChainKey(state.rk32, dhSend);
+  wipe(dhSend, state.rk32, state.ck_s32);
   state.rk32 = send.rk32;
   state.ck_s32 = send.ck32;
 }
@@ -179,10 +207,9 @@ export function ratchetInitInitiatorV2(args: {
   assertKey32("remoteSpkPub32", args.remoteSpkPub32);
   parseAssociatedDataV2(args.ad);
   const dh_self = generateX25519Keypair();
-  const { rk32, ck32 } = kdfRootAndChainKey(
-    args.sk32,
-    x25519SharedSecret(dh_self.priv32, args.remoteSpkPub32)
-  );
+  const dh = x25519SharedSecret(dh_self.priv32, args.remoteSpkPub32);
+  const { rk32, ck32 } = kdfRootAndChainKey(args.sk32, dh);
+  wipe(dh);
   return {
     version: 2,
     role: "initiator",
@@ -265,7 +292,12 @@ export function ratchetEncrypt(args: {
     grp,
   };
   const aad = buildDeliveryAadFromDecodedV2(state.ad, decoded);
-  const ciphertext = aeadEncryptXChaCha20Poly1305(mk32, decoded.nonce24, plaintext, aad);
+  let ciphertext: Uint8Array;
+  try {
+    ciphertext = aeadEncryptXChaCha20Poly1305(mk32, decoded.nonce24, plaintext, aad);
+  } finally {
+    wipe(mk32);
+  }
 
   const header: HeaderProtoV2 = {
     v: 2,
@@ -318,33 +350,43 @@ export function ratchetDecrypt(args: {
   }
   const aad = buildDeliveryAadFromDecodedV2(state.ad, h);
   const working = cloneRatchetState(state);
+  let committed = false;
+  let mk32: Uint8Array | undefined;
+  try {
+    const skippedId = skippedKeyId(h.dh_pub32, h.n);
+    mk32 = working.skipped.get(skippedId);
+    if (mk32) {
+      const plaintext = aeadDecryptXChaCha20Poly1305(mk32, h.nonce24, ciphertext, aad);
+      working.skipped.delete(skippedId);
+      assignState(state, working);
+      committed = true;
+      return { state, plaintext, grp: h.grp };
+    }
 
-  const skippedId = skippedKeyId(h.dh_pub32, h.n);
-  const skipped = working.skipped.get(skippedId);
-  if (skipped) {
-    const plaintext = aeadDecryptXChaCha20Poly1305(skipped, h.nonce24, ciphertext, aad);
-    working.skipped.delete(skippedId);
+    const sameChain =
+      working.dh_remote_pub32 !== undefined && timingSafeEqual(h.dh_pub32, working.dh_remote_pub32);
+    if (sameChain && working.ck_r32 !== undefined && h.n < working.nr) {
+      // Its key was either used in order or taken from the skipped cache above.
+      throw new ReplayDetectedError();
+    }
+    if (!sameChain) {
+      skipMessageKeys(working, h.pn);
+      dhRatchetStep(working, h.dh_pub32);
+    }
+    skipMessageKeys(working, h.n);
+    if (working.ck_r32 === undefined) throw new Error("Receive chain not initialized");
+    const step = kdfChainKey(working.ck_r32);
+    mk32 = step.mk32;
+    wipe(working.ck_r32);
+    working.ck_r32 = step.ck32;
+    working.nr += 1;
+
+    const plaintext = aeadDecryptXChaCha20Poly1305(mk32, h.nonce24, ciphertext, aad);
     assignState(state, working);
+    committed = true;
     return { state, plaintext, grp: h.grp };
+  } finally {
+    wipe(mk32);
+    if (!committed) wipeRatchetState(working);
   }
-
-  const sameChain =
-    working.dh_remote_pub32 !== undefined && timingSafeEqual(h.dh_pub32, working.dh_remote_pub32);
-  if (sameChain && working.ck_r32 !== undefined && h.n < working.nr) {
-    // Its key was either used in order or taken from the skipped cache above.
-    throw new ReplayDetectedError();
-  }
-  if (!sameChain) {
-    skipMessageKeys(working, h.pn);
-    dhRatchetStep(working, h.dh_pub32);
-  }
-  skipMessageKeys(working, h.n);
-  if (working.ck_r32 === undefined) throw new Error("Receive chain not initialized");
-  const { ck32, mk32 } = kdfChainKey(working.ck_r32);
-  working.ck_r32 = ck32;
-  working.nr += 1;
-
-  const plaintext = aeadDecryptXChaCha20Poly1305(mk32, h.nonce24, ciphertext, aad);
-  assignState(state, working);
-  return { state, plaintext, grp: h.grp };
 }
