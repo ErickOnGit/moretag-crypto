@@ -88,6 +88,7 @@ export {
   ReplayDetectedError,
   SessionNotFoundError,
   RatchetStoreConflictError,
+  StoreIoError,
   IdentityMismatchError,
   DecryptFailedError,
   UnknownPrekeyError,

@@ -17,6 +17,7 @@ import {
   SelfSessionError,
   SessionNotFoundError,
   SkipLimitError,
+  StoreIoError,
   UnknownPrekeyError,
 } from "./errors.js";
 import { X3DHPrekeyManagerV2 } from "./x3dh/prekey-manager.js";
@@ -72,6 +73,7 @@ describe("typed errors", () => {
     [new ReplayDetectedError(), "ReplayDetectedError", "replay_detected"],
     [new SessionNotFoundError(), "SessionNotFoundError", "session_not_found"],
     [new RatchetStoreConflictError(), "RatchetStoreConflictError", "store_conflict"],
+    [new StoreIoError("EEXIST"), "StoreIoError", "store_io"],
     [
       new IdentityMismatchError({
         deviceId: SENTINEL,

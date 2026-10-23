@@ -97,7 +97,7 @@ Every typed error has a stable `code` (table in `docs/SPEC.md` §11):
 `DeviceMismatchError`, `SelfSessionError`, `NoSendingChainError`,
 `SkipLimitError`, `InvalidDeviceIdError`, `InvalidWireError`, `BadSignatureError`,
 `LowOrderKeyError`, `IdentityMismatchError`, `SessionNotFoundError`,
-`RatchetStoreConflictError`. Messages never name an id or a stored value; log
+`RatchetStoreConflictError`, `StoreIoError`. Messages never name an id or a stored value; log
 `name` and `code`.
 
 ### Pluggable Primitives (optional)

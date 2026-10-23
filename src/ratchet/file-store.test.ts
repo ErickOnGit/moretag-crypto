@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, copyFileSync, unlinkSync } from "fs";
+import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, copyFileSync, unlinkSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { FileRatchetStore } from "./file-store.js";
@@ -11,7 +11,7 @@ import { hmac } from "@noble/hashes/hmac.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToBase64 } from "../encoding/base64.js";
 import { MAX_SKIPPED_KEYS } from "../crypto/limits.js";
-import { ReplayDetectedError, SessionNotFoundError } from "../errors.js";
+import { ReplayDetectedError, SessionNotFoundError, StoreIoError } from "../errors.js";
 
 function encode(str: string): Uint8Array {
   return new TextEncoder().encode(str);
@@ -412,6 +412,111 @@ describe("FileRatchetStore", () => {
       const { dir, store } = storeWithSkipped([[id, mk()], [id, mk()]]);
       try {
         expect(() => store.load("sess")).toThrow(/state\.skipped\[1\]\[0\] \(duplicate\)/);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe("file-system failures", () => {
+    /** A session id that must never reach a message. */
+    const SESSION = "5e471e1a-3c9e-4f1d-9b2a-7c6d5e4f3a21";
+
+    function thrownBy(fn: () => unknown): Error {
+      try {
+        fn();
+      } catch (err) {
+        return err as Error;
+      }
+      throw new Error("expected a throw");
+    }
+
+    function expectStoreIo(err: Error, dir: string): StoreIoError {
+      expect(err).toBeInstanceOf(StoreIoError);
+      expect((err as StoreIoError).code).toBe("store_io");
+      expect(err.message).toBe("Session store I/O failed");
+      expect(err.message).not.toContain(SESSION);
+      expect(err.message).not.toContain(dir);
+      expect(err).not.toHaveProperty("cause");
+      return err as StoreIoError;
+    }
+
+    it("a lock left behind is store_io EEXIST on load, save and transact, and deleting it recovers", () => {
+      const dir = mkdtempSync(join(tmpdir(), "ratchet-store-"));
+      try {
+        const store = new FileRatchetStore(dir, randomBytes(32));
+        const record = createPersistedSession(newState());
+        store.save(SESSION, record);
+        // A crash between taking the lock and releasing it leaves this file.
+        writeFileSync(join(dir, `${SESSION}.lock`), "");
+        for (const call of [
+          () => store.load(SESSION),
+          () => store.save(SESSION, { ...record, version: record.version + 1 }),
+          () => store.transact(SESSION, (r) => r),
+        ]) {
+          expect(expectStoreIo(thrownBy(call), dir).fsCode).toBe("EEXIST");
+        }
+        // SPEC §14's recovery: with no process using the store, delete the lock.
+        unlinkSync(join(dir, `${SESSION}.lock`));
+        expect(store.load(SESSION)?.version).toBe(record.version);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("a base directory that cannot be created is store_io, naming no path or id", () => {
+      const dir = mkdtempSync(join(tmpdir(), "ratchet-store-"));
+      try {
+        const notADir = join(dir, "file");
+        writeFileSync(notADir, "");
+        const store = new FileRatchetStore(join(notADir, "sessions"), randomBytes(32));
+        expectStoreIo(thrownBy(() => store.load(SESSION)), dir);
+        expectStoreIo(thrownBy(() => store.save(SESSION, createPersistedSession(newState()))), dir);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("a failed read or write of a session file is store_io, naming no path or id", () => {
+      const dir = mkdtempSync(join(tmpdir(), "ratchet-store-"));
+      try {
+        const store = new FileRatchetStore(dir, randomBytes(32));
+        // The lock succeeds; reading, and renaming the written file into place, fail.
+        mkdirSync(join(dir, `${SESSION}.json`));
+        expect(expectStoreIo(thrownBy(() => store.load(SESSION)), dir).fsCode).toBe("EISDIR");
+        expectStoreIo(thrownBy(() => store.save(SESSION, createPersistedSession(newState()))), dir);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("a session file that is not JSON is refused without quoting it", () => {
+      const dir = mkdtempSync(join(tmpdir(), "ratchet-store-"));
+      try {
+        const store = new FileRatchetStore(dir, randomBytes(32));
+        store.save(SESSION, createPersistedSession(newState()));
+        writeFileSync(join(dir, `${SESSION}.json`), `${SESSION} is not JSON`);
+        const err = thrownBy(() => store.load(SESSION));
+        expect(err.message).toBe("Invalid session file: not JSON");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("a transact callback's own error passes through, and the lock is released", () => {
+      const dir = mkdtempSync(join(tmpdir(), "ratchet-store-"));
+      try {
+        const store = new FileRatchetStore(dir, randomBytes(32));
+        store.save(SESSION, createPersistedSession(newState()));
+        const own = new ReplayDetectedError();
+        expect(
+          thrownBy(() =>
+            store.transact(SESSION, () => {
+              throw own;
+            })
+          )
+        ).toBe(own);
+        expect(store.load(SESSION)).toBeDefined();
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }

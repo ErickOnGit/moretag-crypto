@@ -11,7 +11,7 @@ import {
 } from "fs";
 import { dirname, join } from "path";
 import type { PersistedSession, RatchetSessionStore } from "./session-store.js";
-import { SessionNotFoundError } from "../errors.js";
+import { SessionNotFoundError, StoreIoError } from "../errors.js";
 import { hmac } from "@noble/hashes/hmac.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToBase64, decodeStrictBase64 } from "../encoding/base64.js";
@@ -36,18 +36,34 @@ interface SessionEnvelope {
   mac_b64: string;
 }
 
+/**
+ * Runs file-system calls and turns any failure into {@link StoreIoError}: Node's
+ * messages hold the path, and so the session id. Only fs calls go through here,
+ * never the library's own checks or a transact callback.
+ */
+function io<T>(fn: () => T): T {
+  try {
+    return fn();
+  } catch (err) {
+    const fsCode = (err as { code?: unknown } | null)?.code;
+    throw new StoreIoError(typeof fsCode === "string" ? fsCode : undefined);
+  }
+}
+
 function atomicWrite(filePath: string, data: string): void {
   const dir = dirname(filePath);
-  mkdirSync(dir, { recursive: true });
   const tmp = join(dir, `.tmp-${Date.now()}-${Math.random().toString(16).slice(2)}`);
-  const fd = openSync(tmp, "wx", 0o600);
-  try {
-    writeFileSync(fd, data, { encoding: "utf-8" });
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
-  }
-  renameSync(tmp, filePath);
+  io(() => {
+    mkdirSync(dir, { recursive: true });
+    const fd = openSync(tmp, "wx", 0o600);
+    try {
+      writeFileSync(fd, data, { encoding: "utf-8" });
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    renameSync(tmp, filePath);
+  });
   // Best-effort directory fsync for durability.
   try {
     const dfd = openSync(dir, "r");
@@ -107,15 +123,23 @@ export class FileRatchetStore implements RatchetSessionStore {
     return join(this.baseDir, `${sessionId}.lock`);
   }
 
+  /**
+   * Runs fn while holding `<sessionId>.lock`, created exclusively. A lock that is
+   * already there is {@link StoreIoError} with `fsCode` `EEXIST`: another process
+   * holds the session, or a crash inside load, save or transact left the lock
+   * behind. There is no wait and no age check; recovery is SPEC §14's.
+   */
   private withLock<T>(sessionId: string, fn: () => T): T {
     const lock = this.lockPath(sessionId);
-    mkdirSync(dirname(lock), { recursive: true });
-    const fd = openSync(lock, "wx", 0o600);
+    const fd = io(() => {
+      mkdirSync(dirname(lock), { recursive: true });
+      return openSync(lock, "wx", 0o600);
+    });
     try {
       return fn();
     } finally {
       try {
-        closeSync(fd);
+        io(() => closeSync(fd));
       } finally {
         try {
           unlinkSync(lock);
@@ -138,9 +162,10 @@ export class FileRatchetStore implements RatchetSessionStore {
     const p = this.versionPath(sessionId);
     if (!existsSync(p)) return undefined;
 
+    const text = io(() => readFileSync(p, "utf-8"));
     let parsed: unknown;
     try {
-      parsed = JSON.parse(readFileSync(p, "utf-8"));
+      parsed = JSON.parse(text);
     } catch {
       throw new Error("Invalid rollback counter file");
     }
@@ -212,8 +237,14 @@ export class FileRatchetStore implements RatchetSessionStore {
     const file = this.pathFor(sessionId);
     if (!existsSync(file)) return undefined;
 
-    const data = readFileSync(file, "utf-8");
-    const parsed: unknown = JSON.parse(data);
+    const data = io(() => readFileSync(file, "utf-8"));
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(data);
+    } catch {
+      // JSON.parse's own message quotes the file's contents.
+      throw new Error("Invalid session file: not JSON");
+    }
 
     if (!isSessionEnvelope(parsed)) {
       throw new Error("Invalid session file: missing mac_b64");

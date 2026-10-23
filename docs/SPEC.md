@@ -375,6 +375,7 @@ identifier and no stored value. Hosts log `name` and `code`, not the message.
 | `IdentityMismatchError` | `identity_mismatch` | a pinned device presents other identity keys; the registry records the block | the registry's block mark only |
 | `SessionNotFoundError` | `session_not_found` | a store has no session under the id | no |
 | `RatchetStoreConflictError` | `store_conflict` | an optimistic store update lost a race | no |
+| `StoreIoError` | `store_io` | a `FileRatchetStore` file-system call failed, a held or stale lock included (`fsCode` `EEXIST`, §14) | no |
 
 `low_order_key`, `bad_signature`, `invalid_grp`, `invalid_session_init`,
 `invalid_header`, `invalid_bundle` and `skip_limit_exceeded` are the library's own
@@ -470,6 +471,15 @@ excludes backups.
   A file without `v: 2`, a failed MAC, a malformed or missing counter, or a
   version behind the counter makes load fail; saves never regress the version.
   Writes are temp file, fsync, rename, under a lock file.
+- Every file-system failure in `FileRatchetStore` is `StoreIoError`
+  (`store_io`): a fixed message with no path or session id, and Node's error
+  code in `fsCode`. The lock is `<sessionId>.lock`, created exclusively; one that
+  already exists makes load, save and transact fail with `fsCode` `EEXIST`,
+  because another process holds that session or a process crashed while holding
+  it. The store does not wait for a lock or take one over. **Stale-lock
+  recovery:** stop every process that uses the store directory, then delete the
+  leftover `*.lock` files (and any `.tmp-*` files). Session and counter files are
+  only ever replaced by rename, so a crash leaves each one whole.
 - `RatchetSessionStore.transact` is atomic per session id; a missing id is
   `session_not_found` without calling the callback; a throwing callback persists
   nothing; the store persists exactly the returned record.

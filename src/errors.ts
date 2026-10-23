@@ -57,6 +57,25 @@ export class RatchetStoreConflictError extends Error {
 }
 
 /**
+ * Thrown by `FileRatchetStore` when a file-system call fails: a lock file already
+ * there (another process holds the session, or a crash left the lock behind), a
+ * missing or unwritable directory, a failed read, write, fsync or rename. The
+ * message is fixed and never names a path or session id; `fsCode` is Node's error
+ * code (for example `EEXIST` for a held or stale lock), never a path. The original
+ * error is not kept, since its message holds the path.
+ */
+export class StoreIoError extends Error {
+  readonly code = "store_io" as const;
+  readonly fsCode: string | undefined;
+
+  constructor(fsCode?: string) {
+    super("Session store I/O failed");
+    this.name = "StoreIoError";
+    this.fsCode = fsCode;
+  }
+}
+
+/**
  * Thrown when a peer's observed identity keys differ from the pinned (trusted)
  * ones — i.e. the safety number changed. Carries both key sets so the UI can
  * surface a verification prompt; the message itself names neither.
