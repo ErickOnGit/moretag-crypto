@@ -32,7 +32,9 @@
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "typecheck:tests": "tsc -p tsconfig.test.json",
-    "verify": "npm run typecheck && npm run typecheck:tests && npm test && npm run build",
+    "vectors": "node scripts/gen-vectors-v2.mjs --write",
+    "vectors:check": "node scripts/gen-vectors-v2.mjs --check",
+    "verify": "npm run typecheck && npm run typecheck:tests && npm run vectors:check && npm test && npm run build",
     "prepare": "npm run build",
     "prepack": "npm run build && npm test"
   },

@@ -50,6 +50,7 @@
     "**/*.test.ts",
     "**/*.spec.ts",
     "src/test-fixtures.ts",
+    "src/vectors/**",
     "dist/**",
     "node_modules/**"
   ]
