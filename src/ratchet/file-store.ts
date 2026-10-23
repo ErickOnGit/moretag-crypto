@@ -422,7 +422,7 @@ export class FileRatchetStore implements RatchetSessionStore {
   transact(sessionId: string, fn: (current: PersistedSession) => PersistedSession): PersistedSession {
     return this.withLock(sessionId, () => {
       const current = this.loadUnlocked(sessionId);
-      if (!current) throw new Error(`Session not found: ${sessionId}`);
+      if (!current) throw new Error("Session not found");
       const next = fn(current);
       this.saveUnlocked(sessionId, next);
       return next;

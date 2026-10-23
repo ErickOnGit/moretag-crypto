@@ -46,9 +46,7 @@ export function x3dhResponderWithPrekeysV1(args: {
 }): { rk32: Uint8Array } {
   const { session_init, prekeys, trust } = args;
   if (session_init.recipient_device_id !== prekeys.recipient_device_id) {
-    throw new Error(
-      `recipient_device_id mismatch: expected ${prekeys.recipient_device_id}, got ${session_init.recipient_device_id}`
-    );
+    throw new Error("recipient_device_id mismatch");
   }
   if (trust) {
     if (!session_init.sender_ik_sig_pub_b64) {

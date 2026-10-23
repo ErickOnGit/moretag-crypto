@@ -6,6 +6,7 @@ import {
   assertKeyNonceLengths,
 } from "./aead.js";
 import { randomBytes } from "@noble/ciphers/utils.js";
+import { DecryptFailedError } from "../errors.js";
 
 test("XChaCha20-Poly1305 roundtrip", () => {
   const KEY = randomBytes(32);
@@ -82,4 +83,21 @@ test("length enforcement", () => {
   expect(() =>
     aeadDecryptXChaCha20Poly1305(KEY, longNonce, new Uint8Array(0), AAD)
   ).toThrow();
+});
+
+test("an authentication failure is DecryptFailedError, whatever the provider said", () => {
+  const KEY = randomBytes(32);
+  const NONCE = randomNonce24();
+  const ciphertext = aeadEncryptXChaCha20Poly1305(KEY, NONCE, new Uint8Array(5), new Uint8Array(0));
+  ciphertext[0]! ^= 1;
+
+  let err: unknown;
+  try {
+    aeadDecryptXChaCha20Poly1305(KEY, NONCE, ciphertext, new Uint8Array(0));
+  } catch (e) {
+    err = e;
+  }
+  expect(err).toBeInstanceOf(DecryptFailedError);
+  expect((err as DecryptFailedError).code).toBe("decrypt_failed");
+  expect((err as Error).message).toBe("Decryption failed");
 });

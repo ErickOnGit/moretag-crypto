@@ -57,9 +57,7 @@ export function serializeRatchetStateV1(state: RatchetState): SerializedRatchetS
 
 export function deserializeRatchetStateV1(serialized: SerializedRatchetStateV1): RatchetState {
   if (serialized.v !== 1) {
-    throw new TypeError(
-      `Unsupported serialized ratchet state version: ${(serialized as { v: unknown }).v}`
-    );
+    throw new TypeError("Unsupported serialized ratchet state version");
   }
 
   return {
@@ -105,9 +103,7 @@ export function deserializePersistedSessionV1(
   serialized: SerializedPersistedSessionV1
 ): PersistedSession {
   if (serialized.v !== 1) {
-    throw new TypeError(
-      `Unsupported serialized session version: ${(serialized as { v: unknown }).v}`
-    );
+    throw new TypeError("Unsupported serialized session version");
   }
   return {
     version: serialized.version,

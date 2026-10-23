@@ -274,20 +274,20 @@ export class X3DHPrekeyManagerV1 {
   consumeOneTimePrekey(opk_id: X3DHPrekeyId): OneTimePrekeyRecord {
     const key = String(opk_id);
     const rec = this.opks.get(key);
-    if (!rec) throw new Error(`Unknown opk_id: ${String(opk_id)}`);
+    if (!rec) throw new Error("Unknown opk_id");
     this.opks.delete(key);
     return rec;
   }
 
   getSignedPrekeyPriv32(spk_id: X3DHPrekeyId): Uint8Array {
     const rec = this.spks.get(String(spk_id));
-    if (!rec) throw new Error(`Unknown spk_id: ${String(spk_id)}`);
+    if (!rec) throw new Error("Unknown spk_id");
     return rec.priv32;
   }
 
   getOneTimePrekeyPriv32(opk_id: X3DHPrekeyId): Uint8Array {
     const rec = this.opks.get(String(opk_id));
-    if (!rec) throw new Error(`Unknown opk_id: ${String(opk_id)}`);
+    if (!rec) throw new Error("Unknown opk_id");
     return rec.priv32;
   }
 

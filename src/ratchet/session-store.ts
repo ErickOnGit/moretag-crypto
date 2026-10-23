@@ -55,7 +55,7 @@ export class InMemoryRatchetStore implements RatchetSessionStore {
 
   transact(sessionId: string, fn: (current: PersistedSession) => PersistedSession): PersistedSession {
     const current = this.load(sessionId);
-    if (!current) throw new Error(`Session not found: ${sessionId}`);
+    if (!current) throw new Error("Session not found");
     const next = fn(current);
     this.save(sessionId, next);
     return next;
@@ -82,7 +82,7 @@ export async function ratchetEncryptWithStore(
   }
 
   const record = await store.load(sessionId);
-  if (!record) throw new Error(`Session not found: ${sessionId}`);
+  if (!record) throw new Error("Session not found");
   const state = cloneRatchetState(record.state);
   const { header, ciphertext_b64 } = ratchetEncrypt({ ...args, state });
   await store.save(sessionId, { version: record.version + 1, state });
@@ -107,7 +107,7 @@ export async function ratchetDecryptWithStore(
   }
 
   const record = await store.load(sessionId);
-  if (!record) throw new Error(`Session not found: ${sessionId}`);
+  if (!record) throw new Error("Session not found");
   const state = cloneRatchetState(record.state);
   const { plaintext } = ratchetDecrypt({ ...args, state });
   await store.save(sessionId, { version: record.version + 1, state });

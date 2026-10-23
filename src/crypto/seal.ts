@@ -72,7 +72,7 @@ export function sealDeliveryV1(args: {
  * @param args.ciphertext_b64 - Base64-encoded ciphertext
  * @returns Decrypted plaintext
  * @throws TypeError if header fields or ciphertext_b64 are invalid
- * @throws Error if authentication fails (wrong key, tampered data)
+ * @throws DecryptFailedError if authentication fails (wrong key, tampered data)
  */
 export function openDeliveryV1(args: {
   key32: Uint8Array;
@@ -151,7 +151,7 @@ export function sealAttachmentV1(args: {
  * @param args.ciphertext - Binary ciphertext downloaded from storage
  * @returns Decrypted attachment bytes
  * @throws TypeError if key/nonce are not valid base64 or wrong length
- * @throws Error if authentication fails (wrong key, tampered ciphertext)
+ * @throws DecryptFailedError if authentication fails (wrong key, tampered ciphertext)
  */
 export function openAttachmentV1(args: {
   key_b64: string;
@@ -219,7 +219,7 @@ export function sealArchiveV1(args: {
  * @param args.ciphertext_b64 - Base64-encoded ciphertext
  * @returns Decrypted plaintext
  * @throws TypeError if header fields or ciphertext_b64 are invalid
- * @throws Error if authentication fails (wrong key, tampered data)
+ * @throws DecryptFailedError if authentication fails (wrong key, tampered data)
  */
 export function openArchiveV1(args: {
   key32: Uint8Array;

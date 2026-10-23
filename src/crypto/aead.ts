@@ -4,6 +4,7 @@
  * primitives.ts for the host-injection seam).
  */
 import { getPrimitives } from "./primitives.js";
+import { DecryptFailedError } from "../errors.js";
 
 const KEY_LENGTH = 32;
 const NONCE_LENGTH = 24;
@@ -64,7 +65,8 @@ export function aeadEncryptXChaCha20Poly1305(
 
 /**
  * Decrypts ciphertext using XChaCha20-Poly1305 with AAD.
- * Throws an error if authentication fails (wrong key, modified ciphertext, or modified AAD).
+ * Throws {@link DecryptFailedError} if authentication fails (wrong key, modified
+ * ciphertext, nonce or AAD).
  *
  * @param key32 - 32-byte secret key
  * @param nonce24 - 24-byte unique nonce
@@ -79,6 +81,11 @@ export function aeadDecryptXChaCha20Poly1305(
   aad: Uint8Array
 ): Uint8Array {
   assertKeyNonceLengths(key32, nonce24);
-  // Authentication tag is verified by the provider; it throws on mismatch.
-  return getPrimitives().xchacha20poly1305Decrypt(key32, nonce24, ciphertext, aad);
+  // The provider verifies the tag and throws on mismatch. Its error is replaced so
+  // every backend fails the same way and no provider text reaches the host.
+  try {
+    return getPrimitives().xchacha20poly1305Decrypt(key32, nonce24, ciphertext, aad);
+  } catch {
+    throw new DecryptFailedError();
+  }
 }
