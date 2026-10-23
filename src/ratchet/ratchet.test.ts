@@ -199,6 +199,24 @@ describe("Double Ratchet", () => {
     expect(text(ratchetDecrypt({ state: bob, ...m0 }).plaintext)).toBe("x");
   });
 
+  it("the id check runs before the skipped-key lookup: device_mismatch at a stored key, state unchanged", () => {
+    const { alice, bob } = sessionPair();
+    const m0 = send(alice, "m0");
+    const m1 = send(alice, "m1");
+    ratchetDecrypt({ state: bob, ...m1 }); // stores m0's key
+    expect(bob.skipped.size).toBe(1);
+    const before = snapshot(bob);
+    for (const header of [
+      { ...m0.header, sender_device_id: CAROL_DEVICE },
+      { ...m0.header, recipient_device_id: CAROL_DEVICE },
+    ]) {
+      const err = thrownBy(() => ratchetDecrypt({ state: bob, header, ciphertext_b64: m0.ciphertext_b64 }));
+      expect(err).toBeInstanceOf(DeviceMismatchError);
+    }
+    expect(snapshot(bob)).toBe(before);
+    expect(text(ratchetDecrypt({ state: bob, ...m0 }).plaintext)).toBe("m0");
+  });
+
   it("encrypt without a sending chain throws no_sending_chain and changes nothing", () => {
     const { bob } = sessionPair();
     const before = snapshot(bob);
@@ -368,13 +386,26 @@ describe("Double Ratchet", () => {
     }
   });
 
-  it("rejects a v1 header", () => {
+  it("rejects a v1 header and any algorithm but xchacha20poly1305, state unchanged", () => {
     const { alice, bob } = sessionPair();
     const m = send(alice, "x");
-    const header = { ...m.header, v: 1 } as unknown as HeaderProtoV2;
-    expect((thrownBy(() => ratchetDecrypt({ state: bob, header, ciphertext_b64: m.ciphertext_b64 })) as InvalidWireError).code).toBe(
-      "invalid_header"
-    );
+    const before = snapshot(bob);
+    const { alg: _alg, ...noAlg } = m.header;
+    const rows: Array<[unknown, string]> = [
+      [{ ...m.header, v: 1 }, "Invalid header: v"],
+      [{ ...m.header, alg: "aes-256-gcm" }, "Invalid header: alg"],
+      [{ ...m.header, alg: "XCHACHA20POLY1305" }, "Invalid header: alg"],
+      [noAlg, "Invalid header: alg"],
+    ];
+    for (const [header, message] of rows) {
+      const err = thrownBy(() =>
+        ratchetDecrypt({ state: bob, header: header as HeaderProtoV2, ciphertext_b64: m.ciphertext_b64 })
+      );
+      expect(err).toBeInstanceOf(InvalidWireError);
+      expect((err as InvalidWireError).code).toBe("invalid_header");
+      expect((err as InvalidWireError).message).toBe(message);
+    }
+    expect(snapshot(bob)).toBe(before);
   });
 
   it("extra header keys, such as a sidecar, do not change the AAD", () => {

@@ -270,10 +270,14 @@ describe("bundle verification (initiator order: signature, then device)", () => 
     expect(thrownBy(() => verifyPrekeyBundleV2(bundle, BOB_DEVICE))).toBeInstanceOf(BadSignatureError);
   });
 
-  it("shape: version, ids, lengths, the one-time prekey pair and canonical device ids", () => {
+  it("shape: version, algorithm, ids, lengths, the one-time prekey pair and canonical device ids", () => {
     const b = bob({ withOpk: true });
+    const { alg: _alg, ...noAlg } = b.bundle;
     const rows: Array<[unknown, string]> = [
       [{ ...b.bundle, v: 1 }, "invalid_bundle"],
+      [{ ...b.bundle, alg: "x3dh-x25519-hkdf-sha256" }, "invalid_bundle"],
+      [{ ...b.bundle, alg: "" }, "invalid_bundle"],
+      [noAlg, "invalid_bundle"],
       [{ ...b.bundle, spk_id: 1.5 }, "invalid_bundle"],
       [{ ...b.bundle, spk_sig_b64: bytesToBase64(new Uint8Array(63)) }, "invalid_bundle"],
       [{ ...b.bundle, opk_id: undefined }, "invalid_bundle"],
