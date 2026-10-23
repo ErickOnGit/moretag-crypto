@@ -14,6 +14,13 @@
  * Thrown when a received message key has already been consumed — i.e. a replay
  * of an earlier message. Distinct from a generic decrypt failure so callers can
  * treat replays as benign (drop) rather than as session corruption.
+ *
+ * Limits: `ratchetDecrypt` recognises a replay only on the current receiving
+ * chain (same DH key, a message number below the next expected one, and no
+ * skipped key left for it). A replay from an earlier receiving chain fails
+ * authentication instead ({@link DecryptFailedError}). Nothing here survives the
+ * loss or rollback of the stored session state: a state restored from before the
+ * message was read accepts it again. This is not a persistent replay cache.
  */
 export class ReplayDetectedError extends Error {
   readonly code = "replay_detected" as const;

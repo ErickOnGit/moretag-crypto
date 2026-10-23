@@ -9,7 +9,7 @@ import {
   type RatchetSessionStore,
 } from "./session-store.js";
 import { serializePersistedSessionV1 } from "./serialization.js";
-import { DecryptFailedError, SessionNotFoundError } from "../errors.js";
+import { DecryptFailedError, ReplayDetectedError, SessionNotFoundError } from "../errors.js";
 import { generateX25519Keypair } from "../crypto/x25519.js";
 import { randomBytes } from "@noble/ciphers/utils.js";
 
@@ -63,7 +63,7 @@ describe("Ratchet session store", () => {
         header,
         ciphertext_b64,
       })
-    ).rejects.toThrow();
+    ).rejects.toBeInstanceOf(ReplayDetectedError);
   });
 
   it("increments version on every save", async () => {

@@ -11,7 +11,7 @@ import { hmac } from "@noble/hashes/hmac.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToBase64 } from "../encoding/base64.js";
 import { MAX_SKIPPED_KEYS } from "../crypto/limits.js";
-import { SessionNotFoundError } from "../errors.js";
+import { ReplayDetectedError, SessionNotFoundError } from "../errors.js";
 
 function encode(str: string): Uint8Array {
   return new TextEncoder().encode(str);
@@ -105,7 +105,7 @@ describe("FileRatchetStore", () => {
           header,
           ciphertext_b64,
         })
-      ).toThrow();
+      ).toThrow(ReplayDetectedError);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

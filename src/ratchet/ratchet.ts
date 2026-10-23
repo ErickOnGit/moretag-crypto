@@ -12,6 +12,7 @@ import {
   MAX_DEVICE_ID_BYTES,
 } from "../crypto/limits.js";
 import { assertBoundedString, timingSafeEqual } from "../crypto/validation.js";
+import { ReplayDetectedError } from "../errors.js";
 
 export interface RatchetState {
   version: 1;
@@ -227,6 +228,19 @@ export function ratchetEncrypt(args: {
   return { state, header, ciphertext_b64 };
 }
 
+/**
+ * Decrypts one message and advances `state` in place, only on success: all work
+ * runs on a copy, so a throw leaves `state` exactly as it was.
+ *
+ * Throws {@link ReplayDetectedError} for a message on the current receiving chain
+ * (same DH key, ck_r defined) whose number is below the next expected one and whose
+ * skipped key is gone: an in-order replay, or a replay of a skipped message already
+ * read. It is raised before any key derivation or AEAD. Limits: a replay from an
+ * earlier receiving chain is not recognised and fails authentication instead
+ * (DecryptFailedError), and nothing here survives the loss or rollback of the
+ * stored state: a state restored from before the message was read accepts it
+ * again. It is not a persistent replay cache.
+ */
 export function ratchetDecrypt(args: {
   state: RatchetState;
   header: HeaderProtoV1;
@@ -261,7 +275,13 @@ export function ratchetDecrypt(args: {
   const remoteDhPub32 = decodeStrictBase64("dr.dh_pub_b64", header.dr.dh_pub_b64);
   assertKey32("dr.dh_pub_b64 decoded", remoteDhPub32);
 
-  if (!timingSafeEqual(remoteDhPub32, working.dh_remote_pub32)) {
+  const sameChain = timingSafeEqual(remoteDhPub32, working.dh_remote_pub32);
+  if (sameChain && working.ck_r32 !== undefined && header.dr.n < working.nr) {
+    // Its key was either used in order or taken from the skipped cache above.
+    throw new ReplayDetectedError();
+  }
+
+  if (!sameChain) {
     applyReceiverRatchet(working, remoteDhPub32, header.dr.pn);
   }
 

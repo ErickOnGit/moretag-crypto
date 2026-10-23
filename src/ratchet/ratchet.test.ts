@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { ratchetInit, ratchetEncrypt, ratchetDecrypt } from "./ratchet.js";
+import { ratchetInit, ratchetEncrypt, ratchetDecrypt, type RatchetState } from "./ratchet.js";
+import { serializeRatchetStateV1 } from "./serialization.js";
+import { DecryptFailedError, ReplayDetectedError } from "../errors.js";
 import { generateX25519Keypair } from "../crypto/x25519.js";
 import { randomBytes } from "@noble/ciphers/utils.js";
 import { MAX_PLAINTEXT_BYTES, MAX_SKIP_DERIVE } from "../crypto/limits.js";
@@ -259,5 +261,73 @@ describe("Double Ratchet", () => {
         ciphertext_b64,
       })
     ).toThrow(/non-negative integer/);
+  });
+});
+
+describe("replay detection", () => {
+  function pair(): { alice: RatchetState; bob: RatchetState } {
+    const root = randomBytes(32);
+    const aliceDh = generateX25519Keypair();
+    const bobDh = generateX25519Keypair();
+    return {
+      alice: ratchetInit({ rk32: root, selfDh: aliceDh, remoteDhPub32: bobDh.pub32, sendingFirst: true }),
+      bob: ratchetInit({ rk32: root, selfDh: bobDh, remoteDhPub32: aliceDh.pub32, sendingFirst: false }),
+    };
+  }
+  function send(state: RatchetState, text: string, from = "alice-device", to = "bob-device") {
+    const { header, ciphertext_b64 } = ratchetEncrypt({
+      state,
+      plaintext: encode(text),
+      sender_device_id: from,
+      recipient_device_id: to,
+    });
+    return { header, ciphertext_b64 };
+  }
+  const snapshot = (state: RatchetState) => JSON.stringify(serializeRatchetStateV1(state));
+  function thrownBy(fn: () => unknown): unknown {
+    try {
+      fn();
+    } catch (err) {
+      return err;
+    }
+    throw new Error("expected a throw");
+  }
+
+  it("an in-order replay throws ReplayDetectedError and leaves the state identical", () => {
+    const { alice, bob } = pair();
+    const m0 = send(alice, "m0");
+    ratchetDecrypt({ state: bob, ...m0 });
+    const before = snapshot(bob);
+
+    expect(thrownBy(() => ratchetDecrypt({ state: bob, ...m0 }))).toBeInstanceOf(ReplayDetectedError);
+    expect(snapshot(bob)).toBe(before);
+  });
+
+  it("a replay of a consumed skipped message throws ReplayDetectedError and leaves the state identical", () => {
+    const { alice, bob } = pair();
+    const m0 = send(alice, "m0");
+    const m1 = send(alice, "m1");
+    ratchetDecrypt({ state: bob, ...m1 });
+    ratchetDecrypt({ state: bob, ...m0 }); // from the skipped cache
+    const before = snapshot(bob);
+
+    expect(thrownBy(() => ratchetDecrypt({ state: bob, ...m0 }))).toBeInstanceOf(ReplayDetectedError);
+    expect(snapshot(bob)).toBe(before);
+  });
+
+  it("a replay from an earlier receiving chain is not ReplayDetectedError", () => {
+    const { alice, bob } = pair();
+    const m0 = send(alice, "m0");
+    ratchetDecrypt({ state: bob, ...m0 });
+    const reply = send(bob, "reply", "bob-device", "alice-device");
+    ratchetDecrypt({ state: alice, ...reply });
+    const m1 = send(alice, "m1"); // new sending chain: Bob's receiving chain moves on
+    ratchetDecrypt({ state: bob, ...m1 });
+    const before = snapshot(bob);
+
+    const err = thrownBy(() => ratchetDecrypt({ state: bob, ...m0 }));
+    expect(err).not.toBeInstanceOf(ReplayDetectedError);
+    expect(err).toBeInstanceOf(DecryptFailedError);
+    expect(snapshot(bob)).toBe(before);
   });
 });

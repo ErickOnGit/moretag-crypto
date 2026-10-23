@@ -23,6 +23,7 @@ import { FileRatchetStore } from "./ratchet/file-store.js";
 import { createPersistedSession, type PersistedSession } from "./ratchet/session-store.js";
 import { base64ToBytes } from "./encoding/base64.js";
 import type { RatchetState } from "./ratchet/ratchet.js";
+import { ReplayDetectedError } from "./errors.js";
 
 function encode(str: string): Uint8Array {
   return new TextEncoder().encode(str);
@@ -283,7 +284,7 @@ describe("End-to-End Integration", () => {
           header: msg2.header,
           ciphertext_b64: msg2.ciphertext_b64,
         });
-      }).toThrow(); // Should fail - key already consumed
+      }).toThrow(ReplayDetectedError); // key already consumed
 
       // Also verify replaying msg1 and msg3 fails
       expect(() => {
@@ -292,7 +293,7 @@ describe("End-to-End Integration", () => {
           header: msg1.header,
           ciphertext_b64: msg1.ciphertext_b64,
         });
-      }).toThrow();
+      }).toThrow(ReplayDetectedError);
 
       expect(() => {
         ratchetDecrypt({
@@ -300,7 +301,7 @@ describe("End-to-End Integration", () => {
           header: msg3.header,
           ciphertext_b64: msg3.ciphertext_b64,
         });
-      }).toThrow();
+      }).toThrow(ReplayDetectedError);
 
       // =====================================================================
       // Verification: Session remains functional after all operations
