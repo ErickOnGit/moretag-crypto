@@ -6,6 +6,18 @@
 const STRICT_B64_RE =
   /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 
+const B64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/**
+ * RFC 4648 §3.5: the bits a padded final group does not use must be zero. Without
+ * this, several strings decode to the same bytes (for example "AB==" and "AA==").
+ */
+function hasZeroPadBits(b64: string): boolean {
+  if (b64.endsWith("==")) return (B64_ALPHABET.indexOf(b64[b64.length - 3]!) & 0x0f) === 0;
+  if (b64.endsWith("=")) return (B64_ALPHABET.indexOf(b64[b64.length - 2]!) & 0x03) === 0;
+  return true;
+}
+
 /**
  * Convert a Uint8Array to a base64 string.
  * Uses Node.js Buffer when available, otherwise falls back to browser implementation.
@@ -45,7 +57,8 @@ export function base64ToBytes(b64: string): Uint8Array {
 }
 
 /**
- * Validates strict RFC4648 base64 (no url-safe alphabet, no whitespace).
+ * Validates strict, canonical RFC4648 base64 (no url-safe alphabet, no whitespace,
+ * zero padding bits), so each byte string has exactly one accepted encoding.
  * Throws TypeError on invalid input.
  */
 export function assertStrictBase64(label: string, b64: string): void {
@@ -55,7 +68,7 @@ export function assertStrictBase64(label: string, b64: string): void {
   if (b64.length % 4 !== 0) {
     throw new TypeError(`Invalid ${label}: not valid base64`);
   }
-  if (!STRICT_B64_RE.test(b64)) {
+  if (!STRICT_B64_RE.test(b64) || !hasZeroPadBits(b64)) {
     throw new TypeError(`Invalid ${label}: not valid base64`);
   }
 }
