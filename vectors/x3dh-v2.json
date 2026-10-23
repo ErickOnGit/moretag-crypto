@@ -529,6 +529,40 @@
           "expected_recipient_device_id": "f783790d-773a-42fd-88a1-1834034f4933",
           "expected_code": null,
           "refusal": "SPK signature"
+        },
+        {
+          "name": "bundle_alg_unknown",
+          "what": "a correctly signed bundle whose alg is \"not-an-x3dh-alg\", which is not the v2 X3DH alg string (initiator side, refused before the signature check)",
+          "bundle": {
+            "v": 2,
+            "recipient_device_id": "f783790d-773a-42fd-88a1-1834034f4933",
+            "ik_pub_b64": "r45rC0XMExWTfY3BJ/qKhzlMOH9UX2/OGPZIHmdqal8=",
+            "ik_sig_pub_b64": "iUosZzCdKGamnTLR+FUPQeW5gC1Mg5MfxLIQRy8+4yQ=",
+            "spk_id": 7,
+            "spk_pub_b64": "MXn3DhPyr7GTUPi1FgC3hPJiRu111SY+Uk/dLtY9/xc=",
+            "spk_sig_b64": "/Pqb6poGc5b1VENqMlff9Mii6eeziyuUzUZsVRgri5SP9Z3ATsgmS9JlhwsATo46ifnMIPUM8MWP76rjHnpjAw==",
+            "alg": "not-an-x3dh-alg"
+          },
+          "expected_recipient_device_id": "f783790d-773a-42fd-88a1-1834034f4933",
+          "expected_code": "invalid_bundle",
+          "refusal": "alg"
+        },
+        {
+          "name": "bundle_alg_empty",
+          "what": "a correctly signed bundle whose alg is \"\", which is not the v2 X3DH alg string (initiator side, refused before the signature check)",
+          "bundle": {
+            "v": 2,
+            "recipient_device_id": "f783790d-773a-42fd-88a1-1834034f4933",
+            "ik_pub_b64": "r45rC0XMExWTfY3BJ/qKhzlMOH9UX2/OGPZIHmdqal8=",
+            "ik_sig_pub_b64": "iUosZzCdKGamnTLR+FUPQeW5gC1Mg5MfxLIQRy8+4yQ=",
+            "spk_id": 7,
+            "spk_pub_b64": "MXn3DhPyr7GTUPi1FgC3hPJiRu111SY+Uk/dLtY9/xc=",
+            "spk_sig_b64": "/Pqb6poGc5b1VENqMlff9Mii6eeziyuUzUZsVRgri5SP9Z3ATsgmS9JlhwsATo46ifnMIPUM8MWP76rjHnpjAw==",
+            "alg": ""
+          },
+          "expected_recipient_device_id": "f783790d-773a-42fd-88a1-1834034f4933",
+          "expected_code": "invalid_bundle",
+          "refusal": "alg"
         }
       ]
     },

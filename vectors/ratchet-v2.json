@@ -221,6 +221,69 @@
       "length": 32,
       "label": "ratchet/draw/12/alice/dhs",
       "hex": "9709ccb7d1db964a07ec90f17f56f6ae10d7518401f47d6c1c552e6504a31684"
+    },
+    {
+      "seq": 13,
+      "step": 19,
+      "party": "alice",
+      "what": "nonce",
+      "length": 24,
+      "label": "ratchet/draw/13/alice/nonce",
+      "hex": "25ba554c7d98cc05eda495a777d70cb310d58e2a2c470a40"
+    },
+    {
+      "seq": 14,
+      "step": 20,
+      "party": "alice",
+      "what": "nonce",
+      "length": 24,
+      "label": "ratchet/draw/14/alice/nonce",
+      "hex": "c8dc4a2fa409115d37e63e863fd22307f078a791bc15c26e"
+    },
+    {
+      "seq": 15,
+      "step": 21,
+      "party": "bob",
+      "what": "dhs",
+      "length": 32,
+      "label": "ratchet/draw/15/bob/dhs",
+      "hex": "4dd0f711623ee03ad1457c0148e705c7a9e21fbbc01ed7d1db34beb93c0f420a"
+    },
+    {
+      "seq": 16,
+      "step": 22,
+      "party": "bob",
+      "what": "nonce",
+      "length": 24,
+      "label": "ratchet/draw/16/bob/nonce",
+      "hex": "6f9095a0547d75cf917777f182bb19329465e323298778b9"
+    },
+    {
+      "seq": 17,
+      "step": 23,
+      "party": "alice",
+      "what": "dhs",
+      "length": 32,
+      "label": "ratchet/draw/17/alice/dhs",
+      "hex": "5ae7970737a833bf2399a84aaf2f9d521b58521845c027ac11704aa96fabda57"
+    },
+    {
+      "seq": 18,
+      "step": 24,
+      "party": "alice",
+      "what": "nonce",
+      "length": 24,
+      "label": "ratchet/draw/18/alice/nonce",
+      "hex": "92650a3e30dcc8b200b39648a43791a0bc881b3cc0190c4c"
+    },
+    {
+      "seq": 19,
+      "step": 25,
+      "party": "bob",
+      "what": "dhs",
+      "length": 32,
+      "label": "ratchet/draw/19/bob/dhs",
+      "hex": "6f6521ae7b6c2c687882dd86fd8d59b0083705ac6972f72742dabf5aed98aae6"
     }
   ],
   "steps": [
@@ -739,6 +802,248 @@
       "draw_seqs": [
         12
       ]
+    },
+    {
+      "step": 19,
+      "actor": "alice",
+      "op": "encrypt",
+      "message": "a0",
+      "state_after": {
+        "v": 2,
+        "role": "initiator",
+        "ad_b64": "BYeqjxnaGsQ/UIUwTL6Bm2ZDZbBrgBRVZe2Uth/GzpB+Ba+OawtFzBMVk32NwSf6ioc5TDh/VF9vzhj2SB5nampf7ZHUfr82UNUGhFpJrrD1vDqBUcer2G70swNvP76l1ygf7YlKLGcwnShmpp0y0fhVD0HluYAtTIOTH8SyEEcvPuMkdWMutG56QZ6K1/uJKb47ffeDeQ13OkL9iKEYNANPSTM=",
+        "rk32_b64": "mQO6yQN41k2umQaGQCU3YdzwJ++pDacoY3Pu2v3neMU=",
+        "ck_s32_b64": "TG7nsBHz+vSM1x9Y7Mwm8WN7C7KIcfcTr71sFk8HFTU=",
+        "ck_r32_b64": "Iwp1pFVhi3jABLfATbJgO8px82RovVpz1tMarZ6Hytw=",
+        "ns": 1,
+        "nr": 1,
+        "pn": 1,
+        "dh_self": {
+          "priv32_b64": "lwnMt9HblkoH7JDxf1b2rhDXUYQB9H1sHFUuZQSjFoQ=",
+          "pub32_b64": "EVr3hsnmf92bs9uo7W3e3kxM4iQdAn5fb1eTqAgdczQ="
+        },
+        "dh_remote_pub32_b64": "umNY+ThzxNM0j9tMw5x+hX6ByEUcuW5loGqcC8AbCQ8=",
+        "skipped": []
+      },
+      "draw_seqs": [
+        13
+      ]
+    },
+    {
+      "step": 20,
+      "actor": "alice",
+      "op": "encrypt",
+      "message": "a1",
+      "state_after": {
+        "v": 2,
+        "role": "initiator",
+        "ad_b64": "BYeqjxnaGsQ/UIUwTL6Bm2ZDZbBrgBRVZe2Uth/GzpB+Ba+OawtFzBMVk32NwSf6ioc5TDh/VF9vzhj2SB5nampf7ZHUfr82UNUGhFpJrrD1vDqBUcer2G70swNvP76l1ygf7YlKLGcwnShmpp0y0fhVD0HluYAtTIOTH8SyEEcvPuMkdWMutG56QZ6K1/uJKb47ffeDeQ13OkL9iKEYNANPSTM=",
+        "rk32_b64": "mQO6yQN41k2umQaGQCU3YdzwJ++pDacoY3Pu2v3neMU=",
+        "ck_s32_b64": "JdjEgtHoVzc75bPb6IKNuuqaKlUnOdzmifWztW8Q0Sc=",
+        "ck_r32_b64": "Iwp1pFVhi3jABLfATbJgO8px82RovVpz1tMarZ6Hytw=",
+        "ns": 2,
+        "nr": 1,
+        "pn": 1,
+        "dh_self": {
+          "priv32_b64": "lwnMt9HblkoH7JDxf1b2rhDXUYQB9H1sHFUuZQSjFoQ=",
+          "pub32_b64": "EVr3hsnmf92bs9uo7W3e3kxM4iQdAn5fb1eTqAgdczQ="
+        },
+        "dh_remote_pub32_b64": "umNY+ThzxNM0j9tMw5x+hX6ByEUcuW5loGqcC8AbCQ8=",
+        "skipped": []
+      },
+      "draw_seqs": [
+        14
+      ]
+    },
+    {
+      "step": 21,
+      "actor": "bob",
+      "op": "decrypt",
+      "message": "a0",
+      "expect_plaintext_hex": "706e2d736b697020636173653a206130",
+      "dh_step": true,
+      "from_skipped_key": false,
+      "stored_skipped_keys": [],
+      "message_key_hex": "a2b9495087f444b292cc59d1ca1970fcec635d064cea09ca70f8673c831ebb3d",
+      "state_after": {
+        "v": 2,
+        "role": "responder",
+        "ad_b64": "BYeqjxnaGsQ/UIUwTL6Bm2ZDZbBrgBRVZe2Uth/GzpB+Ba+OawtFzBMVk32NwSf6ioc5TDh/VF9vzhj2SB5nampf7ZHUfr82UNUGhFpJrrD1vDqBUcer2G70swNvP76l1ygf7YlKLGcwnShmpp0y0fhVD0HluYAtTIOTH8SyEEcvPuMkdWMutG56QZ6K1/uJKb47ffeDeQ13OkL9iKEYNANPSTM=",
+        "rk32_b64": "VJ29UMewHUEWIZLrkqGcwLcy3+k75aVPk+LkiJI/Mmg=",
+        "ck_s32_b64": "u29pgm08ZERR/O15hbQVEFN9TmyYkQ8B/YyjLD1+Dks=",
+        "ck_r32_b64": "TG7nsBHz+vSM1x9Y7Mwm8WN7C7KIcfcTr71sFk8HFTU=",
+        "ns": 0,
+        "nr": 1,
+        "pn": 1,
+        "dh_self": {
+          "priv32_b64": "TdD3EWI+4DrRRXwBSOcFx6niH7vAHtfR2zS+uTwPQgo=",
+          "pub32_b64": "dNVecrrPRLlvbieCCxea5vfFaBxDs8taO/IOKog6vw0="
+        },
+        "dh_remote_pub32_b64": "EVr3hsnmf92bs9uo7W3e3kxM4iQdAn5fb1eTqAgdczQ=",
+        "skipped": []
+      },
+      "draw_seqs": [
+        15
+      ]
+    },
+    {
+      "step": 22,
+      "actor": "bob",
+      "op": "encrypt",
+      "message": "b0",
+      "state_after": {
+        "v": 2,
+        "role": "responder",
+        "ad_b64": "BYeqjxnaGsQ/UIUwTL6Bm2ZDZbBrgBRVZe2Uth/GzpB+Ba+OawtFzBMVk32NwSf6ioc5TDh/VF9vzhj2SB5nampf7ZHUfr82UNUGhFpJrrD1vDqBUcer2G70swNvP76l1ygf7YlKLGcwnShmpp0y0fhVD0HluYAtTIOTH8SyEEcvPuMkdWMutG56QZ6K1/uJKb47ffeDeQ13OkL9iKEYNANPSTM=",
+        "rk32_b64": "VJ29UMewHUEWIZLrkqGcwLcy3+k75aVPk+LkiJI/Mmg=",
+        "ck_s32_b64": "/HWKRH3hE2CXVwvB16d6p1gZNvc92AGowG1Hq6Usm9A=",
+        "ck_r32_b64": "TG7nsBHz+vSM1x9Y7Mwm8WN7C7KIcfcTr71sFk8HFTU=",
+        "ns": 1,
+        "nr": 1,
+        "pn": 1,
+        "dh_self": {
+          "priv32_b64": "TdD3EWI+4DrRRXwBSOcFx6niH7vAHtfR2zS+uTwPQgo=",
+          "pub32_b64": "dNVecrrPRLlvbieCCxea5vfFaBxDs8taO/IOKog6vw0="
+        },
+        "dh_remote_pub32_b64": "EVr3hsnmf92bs9uo7W3e3kxM4iQdAn5fb1eTqAgdczQ=",
+        "skipped": []
+      },
+      "draw_seqs": [
+        16
+      ]
+    },
+    {
+      "step": 23,
+      "actor": "alice",
+      "op": "decrypt",
+      "message": "b0",
+      "expect_plaintext_hex": "706e2d736b697020636173653a206230",
+      "dh_step": true,
+      "from_skipped_key": false,
+      "stored_skipped_keys": [],
+      "message_key_hex": "ecfe5453fbf174abd4016d509eec50286b102ad9b352eccac6c5f71d49ccf520",
+      "state_after": {
+        "v": 2,
+        "role": "initiator",
+        "ad_b64": "BYeqjxnaGsQ/UIUwTL6Bm2ZDZbBrgBRVZe2Uth/GzpB+Ba+OawtFzBMVk32NwSf6ioc5TDh/VF9vzhj2SB5nampf7ZHUfr82UNUGhFpJrrD1vDqBUcer2G70swNvP76l1ygf7YlKLGcwnShmpp0y0fhVD0HluYAtTIOTH8SyEEcvPuMkdWMutG56QZ6K1/uJKb47ffeDeQ13OkL9iKEYNANPSTM=",
+        "rk32_b64": "zKZFKTPAgTM534WZCYPqZCK5fPwcVE8J4H4nbusvZ6Y=",
+        "ck_s32_b64": "rO3pb4YBP0jEQSeDRIbnQEaUtQbBf2Enyub2TQ3Iab8=",
+        "ck_r32_b64": "/HWKRH3hE2CXVwvB16d6p1gZNvc92AGowG1Hq6Usm9A=",
+        "ns": 0,
+        "nr": 1,
+        "pn": 2,
+        "dh_self": {
+          "priv32_b64": "WueXBzeoM78jmahKry+dUhtYUhhFwCesEXBKqW+r2lc=",
+          "pub32_b64": "fj0wpfbEftPmIl/1niWZZyB0lviic0COkXKXMsSI+xA="
+        },
+        "dh_remote_pub32_b64": "dNVecrrPRLlvbieCCxea5vfFaBxDs8taO/IOKog6vw0=",
+        "skipped": []
+      },
+      "draw_seqs": [
+        17
+      ]
+    },
+    {
+      "step": 24,
+      "actor": "alice",
+      "op": "encrypt",
+      "message": "a2",
+      "state_after": {
+        "v": 2,
+        "role": "initiator",
+        "ad_b64": "BYeqjxnaGsQ/UIUwTL6Bm2ZDZbBrgBRVZe2Uth/GzpB+Ba+OawtFzBMVk32NwSf6ioc5TDh/VF9vzhj2SB5nampf7ZHUfr82UNUGhFpJrrD1vDqBUcer2G70swNvP76l1ygf7YlKLGcwnShmpp0y0fhVD0HluYAtTIOTH8SyEEcvPuMkdWMutG56QZ6K1/uJKb47ffeDeQ13OkL9iKEYNANPSTM=",
+        "rk32_b64": "zKZFKTPAgTM534WZCYPqZCK5fPwcVE8J4H4nbusvZ6Y=",
+        "ck_s32_b64": "1VuiykvqYpHd7umDmpEaIwd/WXuxqolAUcTGyBnG86A=",
+        "ck_r32_b64": "/HWKRH3hE2CXVwvB16d6p1gZNvc92AGowG1Hq6Usm9A=",
+        "ns": 1,
+        "nr": 1,
+        "pn": 2,
+        "dh_self": {
+          "priv32_b64": "WueXBzeoM78jmahKry+dUhtYUhhFwCesEXBKqW+r2lc=",
+          "pub32_b64": "fj0wpfbEftPmIl/1niWZZyB0lviic0COkXKXMsSI+xA="
+        },
+        "dh_remote_pub32_b64": "dNVecrrPRLlvbieCCxea5vfFaBxDs8taO/IOKog6vw0=",
+        "skipped": []
+      },
+      "draw_seqs": [
+        18
+      ]
+    },
+    {
+      "step": 25,
+      "actor": "bob",
+      "op": "decrypt",
+      "message": "a2",
+      "expect_plaintext_hex": "706e2d736b697020636173653a2061322c20706e203d2032",
+      "dh_step": true,
+      "from_skipped_key": false,
+      "stored_skipped_keys": [
+        {
+          "message": "a1",
+          "dh_pub_b64": "EVr3hsnmf92bs9uo7W3e3kxM4iQdAn5fb1eTqAgdczQ=",
+          "n": 1,
+          "stored_by": "SkipMessageKeys(state, header.pn) before the DH step: the previous receiving chain up to pn (Double Ratchet §3.5)"
+        }
+      ],
+      "message_key_hex": "7e9ef74152ac1b3be30cc3768acbe5d57506a29b9d700107c2c1a80a91dc294c",
+      "state_after": {
+        "v": 2,
+        "role": "responder",
+        "ad_b64": "BYeqjxnaGsQ/UIUwTL6Bm2ZDZbBrgBRVZe2Uth/GzpB+Ba+OawtFzBMVk32NwSf6ioc5TDh/VF9vzhj2SB5nampf7ZHUfr82UNUGhFpJrrD1vDqBUcer2G70swNvP76l1ygf7YlKLGcwnShmpp0y0fhVD0HluYAtTIOTH8SyEEcvPuMkdWMutG56QZ6K1/uJKb47ffeDeQ13OkL9iKEYNANPSTM=",
+        "rk32_b64": "hkNh4cS/4RunWVuBoEwKIgLoaIlH3hvZkZM7JwrQCVo=",
+        "ck_s32_b64": "/S4y3KSUzXXkadCxUCycVrDGmWAQ4vsYC2ZnF6jpNn4=",
+        "ck_r32_b64": "1VuiykvqYpHd7umDmpEaIwd/WXuxqolAUcTGyBnG86A=",
+        "ns": 0,
+        "nr": 1,
+        "pn": 1,
+        "dh_self": {
+          "priv32_b64": "b2UhrntsLGh4gt2G/Y1ZsAg3BaxpcvcnQtq/Wu2YquY=",
+          "pub32_b64": "UDuawxfVR8FkyeZXBYSE7j/M5gaw/ZPDjGV82Krbl2w="
+        },
+        "dh_remote_pub32_b64": "fj0wpfbEftPmIl/1niWZZyB0lviic0COkXKXMsSI+xA=",
+        "skipped": [
+          {
+            "dh_pub32_b64": "EVr3hsnmf92bs9uo7W3e3kxM4iQdAn5fb1eTqAgdczQ=",
+            "n": 1,
+            "mk32_b64": "qzLb55qGWgGTtpaCsZuyu6SWVdvnhqwGMcwR+a6bCl0="
+          }
+        ]
+      },
+      "draw_seqs": [
+        19
+      ]
+    },
+    {
+      "step": 26,
+      "actor": "bob",
+      "op": "decrypt",
+      "message": "a1",
+      "expect_plaintext_hex": "706e2d736b697020636173653a2061312c2072656164206c617374",
+      "dh_step": false,
+      "from_skipped_key": true,
+      "stored_skipped_keys": [],
+      "skipped_key_stored_at_step": 25,
+      "skipped_key_stored_by": "SkipMessageKeys(state, header.pn) before the DH step: the previous receiving chain up to pn (Double Ratchet §3.5)",
+      "skipped_key_rule": "pn_skip",
+      "message_key_hex": "ab32dbe79a865a0193b69682b19bb2bba49655dbe786ac0631cc11f9ae9b0a5d",
+      "state_after": {
+        "v": 2,
+        "role": "responder",
+        "ad_b64": "BYeqjxnaGsQ/UIUwTL6Bm2ZDZbBrgBRVZe2Uth/GzpB+Ba+OawtFzBMVk32NwSf6ioc5TDh/VF9vzhj2SB5nampf7ZHUfr82UNUGhFpJrrD1vDqBUcer2G70swNvP76l1ygf7YlKLGcwnShmpp0y0fhVD0HluYAtTIOTH8SyEEcvPuMkdWMutG56QZ6K1/uJKb47ffeDeQ13OkL9iKEYNANPSTM=",
+        "rk32_b64": "hkNh4cS/4RunWVuBoEwKIgLoaIlH3hvZkZM7JwrQCVo=",
+        "ck_s32_b64": "/S4y3KSUzXXkadCxUCycVrDGmWAQ4vsYC2ZnF6jpNn4=",
+        "ck_r32_b64": "1VuiykvqYpHd7umDmpEaIwd/WXuxqolAUcTGyBnG86A=",
+        "ns": 0,
+        "nr": 1,
+        "pn": 1,
+        "dh_self": {
+          "priv32_b64": "b2UhrntsLGh4gt2G/Y1ZsAg3BaxpcvcnQtq/Wu2YquY=",
+          "pub32_b64": "UDuawxfVR8FkyeZXBYSE7j/M5gaw/ZPDjGV82Krbl2w="
+        },
+        "dh_remote_pub32_b64": "fj0wpfbEftPmIl/1niWZZyB0lviic0COkXKXMsSI+xA=",
+        "skipped": []
+      },
+      "draw_seqs": []
     }
   ],
   "messages": [
@@ -892,6 +1197,90 @@
       "h_cbor_hex": "890271786368616368613230706f6c793133303558185298d431b1f395357e5c716165239963ef3025a270f723b650f783790d773a42fd88a11834034f49335075632eb46e7a419e8ad7fb8929be3b7d5820ba6358f93873c4d3348fdb4cc39c7e857e81c8451cb96e65a06a9c0bc01b090f0200f6",
       "aad_hex": "0587aa8f19da1ac43f5085304cbe819b664365b06b80145565ed94b61fc6ce907e05af8e6b0b45cc1315937d8dc127fa8a87394c387f545f6fce18f6481e676a6a5fed91d47ebf3650d506845a49aeb0f5bc3a8151c7abd86ef4b3036f3fbea5d7281fed894a2c67309d2866a69d32d1f8550f41e5b9802d4c83931fc4b210472f3ee32475632eb46e7a419e8ad7fb8929be3b7df783790d773a42fd88a11834034f4933890271786368616368613230706f6c793133303558185298d431b1f395357e5c716165239963ef3025a270f723b650f783790d773a42fd88a11834034f49335075632eb46e7a419e8ad7fb8929be3b7d5820ba6358f93873c4d3348fdb4cc39c7e857e81c8451cb96e65a06a9c0bc01b090f0200f6",
       "ciphertext_hex": "a58dfa7336de8962d877cdd959efe8a68a4d62428b4d9b16"
+    },
+    {
+      "id": "a0",
+      "from": "alice",
+      "to": "bob",
+      "plaintext_utf8": "pn-skip case: a0",
+      "plaintext_hex": "706e2d736b697020636173653a206130",
+      "message_key_hex": "a2b9495087f444b292cc59d1ca1970fcec635d064cea09ca70f8673c831ebb3d",
+      "header": {
+        "v": 2,
+        "alg": "xchacha20poly1305",
+        "nonce_b64": "JbpVTH2YzAXtpJWnd9cMsxDVjiosRwpA",
+        "sender_device_id": "75632eb4-6e7a-419e-8ad7-fb8929be3b7d",
+        "recipient_device_id": "f783790d-773a-42fd-88a1-1834034f4933",
+        "dh_pub_b64": "EVr3hsnmf92bs9uo7W3e3kxM4iQdAn5fb1eTqAgdczQ=",
+        "pn": 1,
+        "n": 0
+      },
+      "h_cbor_hex": "890271786368616368613230706f6c7931333035581825ba554c7d98cc05eda495a777d70cb310d58e2a2c470a405075632eb46e7a419e8ad7fb8929be3b7d50f783790d773a42fd88a11834034f49335820115af786c9e67fdd9bb3dba8ed6ddede4c4ce2241d027e5f6f5793a8081d73340100f6",
+      "aad_hex": "0587aa8f19da1ac43f5085304cbe819b664365b06b80145565ed94b61fc6ce907e05af8e6b0b45cc1315937d8dc127fa8a87394c387f545f6fce18f6481e676a6a5fed91d47ebf3650d506845a49aeb0f5bc3a8151c7abd86ef4b3036f3fbea5d7281fed894a2c67309d2866a69d32d1f8550f41e5b9802d4c83931fc4b210472f3ee32475632eb46e7a419e8ad7fb8929be3b7df783790d773a42fd88a11834034f4933890271786368616368613230706f6c7931333035581825ba554c7d98cc05eda495a777d70cb310d58e2a2c470a405075632eb46e7a419e8ad7fb8929be3b7d50f783790d773a42fd88a11834034f49335820115af786c9e67fdd9bb3dba8ed6ddede4c4ce2241d027e5f6f5793a8081d73340100f6",
+      "ciphertext_hex": "099c49072fa4dbc996fefe73b36e58687e615c552bba238163e00b18a5ee7b2d"
+    },
+    {
+      "id": "a1",
+      "from": "alice",
+      "to": "bob",
+      "plaintext_utf8": "pn-skip case: a1, read last",
+      "plaintext_hex": "706e2d736b697020636173653a2061312c2072656164206c617374",
+      "message_key_hex": "ab32dbe79a865a0193b69682b19bb2bba49655dbe786ac0631cc11f9ae9b0a5d",
+      "header": {
+        "v": 2,
+        "alg": "xchacha20poly1305",
+        "nonce_b64": "yNxKL6QJEV035j6GP9IjB/B4p5G8FcJu",
+        "sender_device_id": "75632eb4-6e7a-419e-8ad7-fb8929be3b7d",
+        "recipient_device_id": "f783790d-773a-42fd-88a1-1834034f4933",
+        "dh_pub_b64": "EVr3hsnmf92bs9uo7W3e3kxM4iQdAn5fb1eTqAgdczQ=",
+        "pn": 1,
+        "n": 1
+      },
+      "h_cbor_hex": "890271786368616368613230706f6c79313330355818c8dc4a2fa409115d37e63e863fd22307f078a791bc15c26e5075632eb46e7a419e8ad7fb8929be3b7d50f783790d773a42fd88a11834034f49335820115af786c9e67fdd9bb3dba8ed6ddede4c4ce2241d027e5f6f5793a8081d73340101f6",
+      "aad_hex": "0587aa8f19da1ac43f5085304cbe819b664365b06b80145565ed94b61fc6ce907e05af8e6b0b45cc1315937d8dc127fa8a87394c387f545f6fce18f6481e676a6a5fed91d47ebf3650d506845a49aeb0f5bc3a8151c7abd86ef4b3036f3fbea5d7281fed894a2c67309d2866a69d32d1f8550f41e5b9802d4c83931fc4b210472f3ee32475632eb46e7a419e8ad7fb8929be3b7df783790d773a42fd88a11834034f4933890271786368616368613230706f6c79313330355818c8dc4a2fa409115d37e63e863fd22307f078a791bc15c26e5075632eb46e7a419e8ad7fb8929be3b7d50f783790d773a42fd88a11834034f49335820115af786c9e67fdd9bb3dba8ed6ddede4c4ce2241d027e5f6f5793a8081d73340101f6",
+      "ciphertext_hex": "5ff5ab49a370418348e3418840b43564559abbbc5b8ff25c2d7b4789a3e6beb38acbc2b4257ed96a4adae0"
+    },
+    {
+      "id": "b0",
+      "from": "bob",
+      "to": "alice",
+      "plaintext_utf8": "pn-skip case: b0",
+      "plaintext_hex": "706e2d736b697020636173653a206230",
+      "message_key_hex": "ecfe5453fbf174abd4016d509eec50286b102ad9b352eccac6c5f71d49ccf520",
+      "header": {
+        "v": 2,
+        "alg": "xchacha20poly1305",
+        "nonce_b64": "b5CVoFR9dc+Rd3fxgrsZMpRl4yMph3i5",
+        "sender_device_id": "f783790d-773a-42fd-88a1-1834034f4933",
+        "recipient_device_id": "75632eb4-6e7a-419e-8ad7-fb8929be3b7d",
+        "dh_pub_b64": "dNVecrrPRLlvbieCCxea5vfFaBxDs8taO/IOKog6vw0=",
+        "pn": 1,
+        "n": 0
+      },
+      "h_cbor_hex": "890271786368616368613230706f6c793133303558186f9095a0547d75cf917777f182bb19329465e323298778b950f783790d773a42fd88a11834034f49335075632eb46e7a419e8ad7fb8929be3b7d582074d55e72bacf44b96f6e27820b179ae6f7c5681c43b3cb5a3bf20e2a883abf0d0100f6",
+      "aad_hex": "0587aa8f19da1ac43f5085304cbe819b664365b06b80145565ed94b61fc6ce907e05af8e6b0b45cc1315937d8dc127fa8a87394c387f545f6fce18f6481e676a6a5fed91d47ebf3650d506845a49aeb0f5bc3a8151c7abd86ef4b3036f3fbea5d7281fed894a2c67309d2866a69d32d1f8550f41e5b9802d4c83931fc4b210472f3ee32475632eb46e7a419e8ad7fb8929be3b7df783790d773a42fd88a11834034f4933890271786368616368613230706f6c793133303558186f9095a0547d75cf917777f182bb19329465e323298778b950f783790d773a42fd88a11834034f49335075632eb46e7a419e8ad7fb8929be3b7d582074d55e72bacf44b96f6e27820b179ae6f7c5681c43b3cb5a3bf20e2a883abf0d0100f6",
+      "ciphertext_hex": "7bbce41ccb0a2ac7114a270cf2297285b583f5705aec76980fe1762c70de9724"
+    },
+    {
+      "id": "a2",
+      "from": "alice",
+      "to": "bob",
+      "plaintext_utf8": "pn-skip case: a2, pn = 2",
+      "plaintext_hex": "706e2d736b697020636173653a2061322c20706e203d2032",
+      "message_key_hex": "7e9ef74152ac1b3be30cc3768acbe5d57506a29b9d700107c2c1a80a91dc294c",
+      "header": {
+        "v": 2,
+        "alg": "xchacha20poly1305",
+        "nonce_b64": "kmUKPjDcyLIAs5ZIpDeRoLyIGzzAGQxM",
+        "sender_device_id": "75632eb4-6e7a-419e-8ad7-fb8929be3b7d",
+        "recipient_device_id": "f783790d-773a-42fd-88a1-1834034f4933",
+        "dh_pub_b64": "fj0wpfbEftPmIl/1niWZZyB0lviic0COkXKXMsSI+xA=",
+        "pn": 2,
+        "n": 0
+      },
+      "h_cbor_hex": "890271786368616368613230706f6c7931333035581892650a3e30dcc8b200b39648a43791a0bc881b3cc0190c4c5075632eb46e7a419e8ad7fb8929be3b7d50f783790d773a42fd88a11834034f493358207e3d30a5f6c47ed3e6225ff59e259967207496f8a273408e91729732c488fb100200f6",
+      "aad_hex": "0587aa8f19da1ac43f5085304cbe819b664365b06b80145565ed94b61fc6ce907e05af8e6b0b45cc1315937d8dc127fa8a87394c387f545f6fce18f6481e676a6a5fed91d47ebf3650d506845a49aeb0f5bc3a8151c7abd86ef4b3036f3fbea5d7281fed894a2c67309d2866a69d32d1f8550f41e5b9802d4c83931fc4b210472f3ee32475632eb46e7a419e8ad7fb8929be3b7df783790d773a42fd88a11834034f4933890271786368616368613230706f6c7931333035581892650a3e30dcc8b200b39648a43791a0bc881b3cc0190c4c5075632eb46e7a419e8ad7fb8929be3b7d50f783790d773a42fd88a11834034f493358207e3d30a5f6c47ed3e6225ff59e259967207496f8a273408e91729732c488fb100200f6",
+      "ciphertext_hex": "2b051428d6fb5c4a904aa3e4bd508c7a1337fc3260ae860396156e834814493e88612a7b18d938ee"
     }
   ],
   "refusals": [
@@ -1887,6 +2276,84 @@
       "encrypt_plaintext_hex": "78",
       "expected_code": "no_sending_chain",
       "refusal": "no_sending_chain",
+      "state_unchanged": true
+    },
+    {
+      "name": "initiator_header_dh_equals_responder_spk",
+      "what": "to alice before any reply (she has sent m0-m2): a header from bob whose dh_pub is bob's signed prekey, which is alice's DHr after RatchetInitAlice; she has no receiving chain for it, so the message cannot be authentic (r0's nonce and ciphertext, dh_pub replaced)",
+      "after_step": 5,
+      "receiver": "alice",
+      "state_before": {
+        "v": 2,
+        "role": "initiator",
+        "ad_b64": "BYeqjxnaGsQ/UIUwTL6Bm2ZDZbBrgBRVZe2Uth/GzpB+Ba+OawtFzBMVk32NwSf6ioc5TDh/VF9vzhj2SB5nampf7ZHUfr82UNUGhFpJrrD1vDqBUcer2G70swNvP76l1ygf7YlKLGcwnShmpp0y0fhVD0HluYAtTIOTH8SyEEcvPuMkdWMutG56QZ6K1/uJKb47ffeDeQ13OkL9iKEYNANPSTM=",
+        "rk32_b64": "w/nrHj0FL9jgpl/+FUrJXPYcrkH40AdUHAVWkNnjeE4=",
+        "ck_s32_b64": "UoHokgXCJa8nThDpSx7u2uzfRhIs2Z9T/ws5xt0PHYo=",
+        "ck_r32_b64": null,
+        "ns": 3,
+        "nr": 0,
+        "pn": 0,
+        "dh_self": {
+          "priv32_b64": "3dE86n0e7MQYC1ptBYn3zcIk0kBY7oAOgV2YwuQUHnU=",
+          "pub32_b64": "2Fp/eeT5qPLzvUM8peMJHx2ZtDMFCwV6+kZB/ETySzQ="
+        },
+        "dh_remote_pub32_b64": "MXn3DhPyr7GTUPi1FgC3hPJiRu111SY+Uk/dLtY9/xc=",
+        "skipped": []
+      },
+      "deliver": {
+        "header": {
+          "v": 2,
+          "alg": "xchacha20poly1305",
+          "nonce_b64": "voKjmX9QslAtxvVYBs3Ie6aYu91yZeZD",
+          "sender_device_id": "f783790d-773a-42fd-88a1-1834034f4933",
+          "recipient_device_id": "75632eb4-6e7a-419e-8ad7-fb8929be3b7d",
+          "dh_pub_b64": "MXn3DhPyr7GTUPi1FgC3hPJiRu111SY+Uk/dLtY9/xc=",
+          "pn": 0,
+          "n": 0
+        },
+        "ciphertext_hex": "8394857faab10cfe1e7e10813ebde9c742aafc79f28792dc90cf"
+      },
+      "expected_code": "decrypt_failed",
+      "refusal": "no receiving chain for this ratchet key",
+      "state_unchanged": true
+    },
+    {
+      "name": "header_alg_not_xchacha20poly1305",
+      "what": "m1 with alg \"chacha20poly1305\" in place of \"xchacha20poly1305\"",
+      "after_step": 6,
+      "receiver": "bob",
+      "state_before": {
+        "v": 2,
+        "role": "responder",
+        "ad_b64": "BYeqjxnaGsQ/UIUwTL6Bm2ZDZbBrgBRVZe2Uth/GzpB+Ba+OawtFzBMVk32NwSf6ioc5TDh/VF9vzhj2SB5nampf7ZHUfr82UNUGhFpJrrD1vDqBUcer2G70swNvP76l1ygf7YlKLGcwnShmpp0y0fhVD0HluYAtTIOTH8SyEEcvPuMkdWMutG56QZ6K1/uJKb47ffeDeQ13OkL9iKEYNANPSTM=",
+        "rk32_b64": "iNcaIXcnVpUlWWmYHoTDA7gdvl0JZLvaY5mLuCeQ6zw=",
+        "ck_s32_b64": "dhW4YTcFx4oKzmr3KTG+SQLYQVnnrZzYvVnSm1fAUBw=",
+        "ck_r32_b64": "bAEzberRUWssphyYGhSvMnlbQoIuIA83RSqz1dKRp/w=",
+        "ns": 0,
+        "nr": 1,
+        "pn": 0,
+        "dh_self": {
+          "priv32_b64": "2NJ+1gB+jyJlbFSTUEipHX6Z2RabgaPn5G119iMwJa8=",
+          "pub32_b64": "ZEAceWaMcA2QvFpkzaTfKWFZRKWvhZPJSqoiGohuXEQ="
+        },
+        "dh_remote_pub32_b64": "2Fp/eeT5qPLzvUM8peMJHx2ZtDMFCwV6+kZB/ETySzQ=",
+        "skipped": []
+      },
+      "deliver": {
+        "header": {
+          "v": 2,
+          "alg": "chacha20poly1305",
+          "nonce_b64": "78OxkITcDbHj8fPFqj5EmNVw8hzwOval",
+          "sender_device_id": "75632eb4-6e7a-419e-8ad7-fb8929be3b7d",
+          "recipient_device_id": "f783790d-773a-42fd-88a1-1834034f4933",
+          "dh_pub_b64": "2Fp/eeT5qPLzvUM8peMJHx2ZtDMFCwV6+kZB/ETySzQ=",
+          "pn": 0,
+          "n": 1
+        },
+        "ciphertext_hex": "b61e572678490df3d3c16db47e18638b84007973ee2cbc353bb8ae4ed515f681a96a2dbbb44c679a6466b031df4b8bd6"
+      },
+      "expected_code": "invalid_header",
+      "refusal": "alg",
       "state_unchanged": true
     }
   ]

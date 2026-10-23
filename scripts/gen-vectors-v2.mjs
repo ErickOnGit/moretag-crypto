@@ -11,7 +11,7 @@
  * keystream). Then protocol v2 as the design states it (X3DH with the 0xFF prefix, the 164-byte
  * AD, the Double Ratchet with the v2 KDF strings, XChaCha20-Poly1305 with AAD = AD || H, the CBOR
  * header array H with its grp slot, and the normative draw order): vectors/x3dh-v2.json,
- * vectors/ratchet-v2.json, vectors/aead-edges.json, vectors/spk-sig-msg-v1.json and
+ * vectors/ratchet-v2.json, vectors/aead-edges.json, vectors/spk-sig-msg-v1-independent.json and
  * vectors/primitives.json. Every secret is SHA-256("moretag-crypto/vectors/v2/" || label) and the
  * label is stored beside it; the JSON is deterministic.
  *
@@ -91,6 +91,11 @@ const PARAMS = Object.freeze({
       cite: 'design.md:141 (§3.1 item 7), design.md:205 (§3.5)',
     },
     initiator_order: { value: 'verify the SPK signature, then bundle.recipient_device_id == expected (device_mismatch), then DH', cite: 'design.md:143 (§3.1 item 9)' },
+    bundle_alg: {
+      value: null,
+      note: 'the bundle carries alg (pr-briefs.md:164) and alg strings are "unchanged" (design.md:212, pr-briefs.md:102), but no text the author may read gives the value; valid bundles here carry no alg key, a present alg is refused as invalid_bundle, and the refusal vectors use values that cannot be the real string',
+      cite: 'design.md:212; pr-briefs.md:102, :164; the lead\'s request of 2026-10-22 (invalid_bundle)',
+    },
     self_session: { value: 'equal device ids throw self_session', cite: 'design.md:146 (§3.1 item 12)' },
   },
   ad: {
@@ -120,6 +125,7 @@ const PARAMS = Object.freeze({
     skip_cite: 'design.md:177 (§3.3 item 8); DR §3.5 MAX_SKIP',
     replay: { value: 'replay_detected on the current receiving chain when n < nr and no skipped key exists, before authentication; an earlier-chain replay fails the AEAD (decrypt_failed)', cite: 'design.md:178 (§3.3 item 9)' },
     no_sending_chain: { value: 'encrypt without CKs throws no_sending_chain', cite: 'design.md:180 (§3.3 item 11)' },
+    no_receiving_chain: { value: 'a message on the current DHr with no CKr (the initiator before any reply, whose DHr is the peer\'s SPK) cannot be authentic: decrypt_failed, state unchanged', cite: 'DR §3.5 (KDF_CK needs CKr); the lead\'s request of 2026-10-22' },
     decrypt_order: { value: 'v === 2, header ids against AD, skipped key, replay check, skip, DH step (one 32-byte draw), AEAD', cite: 'pr-briefs.md L2 scope (ratchetDecrypt); design.md:176-178' },
   },
   header: {
@@ -161,6 +167,9 @@ const PARAMS = Object.freeze({
     { topic: 'sidecar sender differing from the row', reading: 'device_mismatch', interprets: 'design.md:107 and pr-briefs L2 ("refuses a differing sidecar id", no code named)' },
     { topic: 'aead-edges pairing', reading: 'every plaintext length up to 65 with every AAD length (32 cases); 16,500 with AAD length 17 only, to keep the file small', interprets: 'design.md:388 (lists lengths, not their pairing)' },
     { topic: 'self-seal header field', reading: 'the header field is named nonce (base64), as the design writes it; the header is not in the AAD', interprets: 'design.md:234' },
+    { topic: 'bundle alg value', reading: 'unknown to the author (no readable text gives it); valid bundles carry no alg, any present alg is refused, refusal values are "not-an-x3dh-alg" and ""', interprets: 'design.md:212, pr-briefs.md:102 and :164' },
+    { topic: 'delivery header alg', reading: 'an alg other than "xchacha20poly1305" is invalid_header (code named by the lead, 2026-10-22)', interprets: 'design.md:187 (H\'s alg string)' },
+    { topic: 'no receiving chain', reading: 'decrypt on the current DHr with no CKr throws decrypt_failed before any AEAD', interprets: 'design.md:170 (RatchetInitAlice leaves CKr empty), DR §3.5' },
     { topic: 'Double Ratchet revision', reading: 'signal.org now serves revision 4 (2025-11-04), whose classical sections 3.1-3.5 give the pseudocode used here; revision 1 numbering is kept in citations (revision 4 moved "recommended cryptographic algorithms" from §5.2 to §7.2)', interprets: 'design.md:9' },
   ],
 });
@@ -977,6 +986,7 @@ function parseSessionInit(w) {
 // The initiator's bundle checks in the design's order: signature, then the expected device.
 function initiatorBundleChecks(bundle, expectedRecipientDeviceId) {
   if (!bundle || bundle.v !== 2) throw new ProtoError('invalid_bundle', 'v');
+  if ('alg' in bundle && bundle.alg !== PARAMS.x3dh.bundle_alg.value) throw new ProtoError('invalid_bundle', 'alg');
   const recipient = canonicalId(bundle.recipient_device_id);
   const ik = strictB64(bundle.ik_pub_b64, 32, 'invalid_bundle');
   const ikSig = strictB64(bundle.ik_sig_pub_b64, 32, 'invalid_bundle');
@@ -1100,16 +1110,20 @@ function ratchetEncrypt(state, plaintext, grp, draw) {
   return { state: s, wire: headerWire(header), H, aad, mk, ct };
 }
 
+// Returns the (dh, n) of every key it stored, so the script can say which rule stored a key.
 function skipMessageKeys(s, until) {
   if (s.nr + PARAMS.ratchet.max_skip < until) throw new ProtoError('too_many_skipped');
-  if (!s.ckr) return;
+  const stored = [];
+  if (!s.ckr) return stored;
   while (s.nr < until) {
     const [ck, mk] = kdfCk(s.ckr);
     s.skipped.push({ dh: Buffer.from(s.dhr), n: s.nr, mk });
     if (s.skipped.length > PARAMS.ratchet.skipped_cache) s.skipped.shift();
+    stored.push({ dh: Buffer.from(s.dhr), n: s.nr });
     s.ckr = ck;
     s.nr += 1;
   }
+  return stored;
 }
 
 function dhRatchet(s, header, draw) {
@@ -1136,21 +1150,23 @@ function ratchetDecrypt(state, wire, ct, draw) {
     const { mk } = s.skipped[at];
     const plaintext = xchachaOpen(mk, header.nonce, aad, ct);
     s.skipped.splice(at, 1);
-    return { state: s, plaintext, mk, H, aad, header, fromSkipped: true, dhStep: false };
+    return { state: s, plaintext, mk, H, aad, header, fromSkipped: true, dhStep: false, stored: [] };
   }
   if (s.dhr && s.dhr.equals(header.dhPub) && header.n < s.nr) throw new ProtoError('replay_detected');
   let dhStep = false;
+  const stored = [];
   if (!s.dhr || !s.dhr.equals(header.dhPub)) {
-    skipMessageKeys(s, header.pn);
+    stored.push(...skipMessageKeys(s, header.pn).map((e) => ({ ...e, rule: 'pn' })));
     dhRatchet(s, header, draw);
     dhStep = true;
   }
-  skipMessageKeys(s, header.n);
+  stored.push(...skipMessageKeys(s, header.n).map((e) => ({ ...e, rule: 'n' })));
+  if (!s.ckr) throw new ProtoError('decrypt_failed', 'no receiving chain for this ratchet key');
   const [ck, mk] = kdfCk(s.ckr);
   s.ckr = ck;
   s.nr += 1;
   const plaintext = xchachaOpen(mk, header.nonce, aad, ct);
-  return { state: s, plaintext, mk, H, aad, header, fromSkipped: false, dhStep };
+  return { state: s, plaintext, mk, H, aad, header, fromSkipped: false, dhStep, stored };
 }
 
 function serializeState(s) {
@@ -1384,6 +1400,12 @@ function buildX3dhScenario(name, withOpk, plaintextText) {
 
     const badSigBundle = { ...bundle, spk_pub_b64: b64(MALLORY.ik.pub) };
     add({ name: 'bundle_bad_signature', what: 'the bundle\'s SPK was replaced, so its signature fails (initiator side, before any pin or DH)', bundle: badSigBundle, expected_recipient_device_id: BOB.device_id, expected_code: null }, () => initiatorBundleChecks(badSigBundle, BOB.device_id), 'bad_signature');
+
+    // Appended 2026-10-22 at the lead's request.
+    for (const [suffix, alg] of [['unknown', 'not-an-x3dh-alg'], ['empty', '']]) {
+      const wrongAlg = { ...bundle, alg };
+      add({ name: `bundle_alg_${suffix}`, what: `a correctly signed bundle whose alg is ${JSON.stringify(alg)}, which is not the v2 X3DH alg string (initiator side, refused before the signature check)`, bundle: wrongAlg, expected_recipient_device_id: BOB.device_id, expected_code: 'invalid_bundle' }, () => initiatorBundleChecks(wrongAlg, BOB.device_id));
+    }
   } else {
     add({ name: 'first_message_after_opk_deleted', what: 'the first message delivered again after the responder deleted the one-time prekey it used', session_init: sessionInit, sender_device_id: ALICE.device_id, prekeys_held: { spk_ids: [BOB.spk.id], opk_ids: [] }, deliver: 'first_message', expected_code: 'unknown_opk' }, respond(sessionInit, { prekeys: bobPrekeys({ withOpk: false }) }));
   }
@@ -1468,13 +1490,32 @@ function buildRatchetFile() {
     });
     finish({ step: s, actor: who, op: 'encrypt', message: id, state_after: serializeState(st[who]) });
   };
-  const decrypt = (who, id) => {
+  // Which step and rule stored each skipped key (Double Ratchet §3.5 SkipMessageKeys).
+  const skipOrigin = new Map();
+  const SKIP_RULES = {
+    pn: 'SkipMessageKeys(state, header.pn) before the DH step: the previous receiving chain up to pn (Double Ratchet §3.5)',
+    n: 'SkipMessageKeys(state, header.n) on the receiving chain in use (Double Ratchet §3.5)',
+  };
+  const messageAt = (dh, n) => [...sent].find(([, m]) => m.wire.dh_pub_b64 === b64(dh) && m.wire.n === n)?.[0] ?? null;
+  const decrypt = (who, id, explain = false) => {
     const s = begin();
     const m = sent.get(id);
     const r = ratchetDecrypt(st[who], m.wire, m.ct, draws.for(who));
     assertBytes(r.plaintext, utf8(m.text), `decrypt ${id}`);
     st[who] = r.state;
-    finish({ step: s, actor: who, op: 'decrypt', message: id, expect_plaintext_hex: hex(r.plaintext), dh_step: r.dhStep, from_skipped_key: r.fromSkipped, message_key_hex: hex(r.mk), state_after: serializeState(st[who]) });
+    for (const e of r.stored) skipOrigin.set(`${hex(e.dh)}:${e.n}`, { step: s, rule: e.rule });
+    const why = {};
+    if (explain) {
+      why.stored_skipped_keys = r.stored.map((e) => ({ message: messageAt(e.dh, e.n), dh_pub_b64: b64(e.dh), n: e.n, stored_by: SKIP_RULES[e.rule] }));
+      if (r.fromSkipped) {
+        const origin = skipOrigin.get(`${hex(r.header.dhPub)}:${r.header.n}`);
+        why.skipped_key_stored_at_step = origin.step;
+        why.skipped_key_stored_by = SKIP_RULES[origin.rule];
+        why.skipped_key_rule = origin.rule === 'pn' ? 'pn_skip' : 'n_skip';
+      }
+    }
+    finish({ step: s, actor: who, op: 'decrypt', message: id, expect_plaintext_hex: hex(r.plaintext), dh_step: r.dhStep, from_skipped_key: r.fromSkipped, ...why, message_key_hex: hex(r.mk), state_after: serializeState(st[who]) });
+    return r;
   };
   const saveReload = (who) => {
     const s = begin();
@@ -1501,6 +1542,22 @@ function buildRatchetFile() {
   saveReload('alice');
   encrypt('bob', 'r2', 'last one');
   decrypt('alice', 'r2');
+
+  // Steps 19-26, appended 2026-10-22 (earlier steps unchanged): a message from the peer's previous
+  // sending chain read after the DH step for its next chain, so its key can only come from the pn
+  // skip. Appended decrypt steps also list the keys they stored and, when a key is used, which step
+  // and rule stored it.
+  encrypt('alice', 'a0', 'pn-skip case: a0');
+  encrypt('alice', 'a1', 'pn-skip case: a1, read last');
+  decrypt('bob', 'a0', true);
+  encrypt('bob', 'b0', 'pn-skip case: b0');
+  decrypt('alice', 'b0', true);
+  encrypt('alice', 'a2', 'pn-skip case: a2, pn = 2');
+  const readA2 = decrypt('bob', 'a2', true);
+  const readA1 = decrypt('bob', 'a1', true);
+  if (sent.get('a2').wire.pn !== 2) fail('a2 must carry pn = 2');
+  if (readA2.stored.length !== 1 || readA2.stored[0].rule !== 'pn' || messageAt(readA2.stored[0].dh, readA2.stored[0].n) !== 'a1') fail('reading a2 must store exactly a1\'s key by the pn skip');
+  if (!readA1.fromSkipped || skipOrigin.get(`${hex(readA1.header.dhPub)}:${readA1.header.n}`).rule !== 'pn') fail('a1 must be read from the key the pn skip stored');
 
   const stepOf = (op, actor, message) => steps.find((s) => s.op === op && s.actor === actor && (message === undefined || s.message === message)).step;
 
@@ -1560,6 +1617,9 @@ function buildRatchetFile() {
     const e = expectRefusal('ratchet/no_sending_chain', () => ratchetEncrypt(initResponder({ sk, ad, spk: BOB.spk }), utf8('x'), null, throwaway), 'no_sending_chain');
     refusals.push({ name: 'encrypt_without_sending_chain', what: 'a fresh responder state (no CKs) asked to encrypt', receiver: 'bob', state_before: serializeState(initResponder({ sk, ad, spk: BOB.spk })), encrypt_plaintext_hex: hex(utf8('x')), expected_code: 'no_sending_chain', refusal: e.message, state_unchanged: true });
   }
+  // Appended 2026-10-22 at the lead's request.
+  refuse({ name: 'initiator_header_dh_equals_responder_spk', what: 'to alice before any reply (she has sent m0-m2): a header from bob whose dh_pub is bob\'s signed prekey, which is alice\'s DHr after RatchetInitAlice; she has no receiving chain for it, so the message cannot be authentic (r0\'s nonce and ciphertext, dh_pub replaced)', afterStep: stepOf('encrypt', 'alice', 'm2'), receiver: 'alice', wire: { ...msg('r0').wire, dh_pub_b64: b64(BOB.spk.pub), pn: 0, n: 0 }, ct: msg('r0').ct, expected_code: 'decrypt_failed' });
+  refuse({ name: 'header_alg_not_xchacha20poly1305', what: 'm1 with alg "chacha20poly1305" in place of "xchacha20poly1305"', afterStep: afterBobM0, receiver: 'bob', wire: { ...msg('m1').wire, alg: 'chacha20poly1305' }, ct: msg('m1').ct, expected_code: 'invalid_header' });
 
   return {
     about: 'Double Ratchet v2 script (design.md §3.3, §3.4, §3.6) generated by scripts/gen-vectors-v2.mjs. Run the steps in order with one scripted-randomness queue holding the draws in seq order; every encrypt must give the listed bytes and every decrypt the listed plaintext; state_after is the state serialized as design.md:208 describes. save_and_reload steps serialize and deserialize through the public serializers. m3 carries a filled grp slot. Refusal vectors use ordinary randomness; each must fail with expected_code (null: any typed refusal) and leave state_before unchanged.',
@@ -1582,7 +1642,7 @@ function buildRatchetFile() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// aead-edges.json and spk-sig-msg-v1.json
+// aead-edges.json and spk-sig-msg-v1-independent.json
 // ---------------------------------------------------------------------------------------------
 
 function buildAeadFile() {

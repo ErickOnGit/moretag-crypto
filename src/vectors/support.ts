@@ -95,7 +95,12 @@ export function resetProviders(): void {
 
 // --- Name mapping between the vector files and the library ------------------------
 
-/** The vectors' wire bundle and session_init carry no `alg`; the library's carry the unchanged string. */
+/**
+ * The vectors' valid bundles and session_inits carry no `alg`: no text the author
+ * could read gives its value. The library's carry the unchanged v2 string, added
+ * here and never in the files. A refusal vector that carries its own `alg`
+ * (bundle_alg_unknown, bundle_alg_empty) keeps it, since the wire value wins.
+ */
 export function libraryBundle(wire: Record<string, unknown>): any {
   return { alg: X3DH_ALG_V2, ...wire };
 }

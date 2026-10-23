@@ -2,8 +2,10 @@
  * vectors/ratchet-v2.json through the public API, once per provider: the X3DH
  * setup through the bootstraps, then every step in order with one scripted
  * randomness queue, a save and reload through the public serializers, a message
- * with the group slot filled, and every refusal with its code and the state
- * unchanged.
+ * with the group slot filled, a message read after its sender's next DH step from
+ * the key the pn skip stored (steps 19 to 26), and every refusal with its code and
+ * the state unchanged. Each decrypt step's dh_step, from_skipped_key and stored
+ * skipped keys are checked on the library's state.
  */
 import { describe, it, expect, afterEach } from "vitest";
 import {
@@ -49,6 +51,9 @@ describe.each(PROVIDERS.map((p) => p.name))("ratchet-v2.json on %s", (providerNa
     const bobKeys = partyPrekeys(bob, { opk_ids: [] });
     const states: Record<string, RatchetState | undefined> = {};
     const messages = new Map<string, any>(file.messages.map((m: any) => [m.id, m]));
+    // Which step stored each skipped key, in the library's state.
+    const storedAt = new Map<string, number>();
+    let readFromPnSkip = 0;
 
     for (const step of file.steps) {
       switch (step.op) {
@@ -90,13 +95,36 @@ describe.each(PROVIDERS.map((p) => p.name))("ratchet-v2.json on %s", (providerNa
         }
         case "decrypt": {
           const m = messages.get(step.message);
+          const state = states[step.actor]!;
+          const keysBefore = new Set(state.skipped.keys());
+          const remoteBefore = state.dh_remote_pub32 ? hex(state.dh_remote_pub32) : null;
+          const keyId = `${m.header.dh_pub_b64}:${m.header.n}`;
           const out = ratchetDecrypt({
-            state: states[step.actor]!,
+            state,
             header: libraryHeader(m.header),
             ciphertext_b64: hexToB64(m.ciphertext_hex),
           });
           expect(hex(out.plaintext), step.message).toBe(step.expect_plaintext_hex);
           expect(out.grp).toEqual(m.header.grp ?? null);
+          // What the step says about the ratchet, checked on the library's state.
+          const stored = [...state.skipped.keys()].filter((k) => !keysBefore.has(k));
+          for (const k of stored) storedAt.set(k, step.step);
+          expect(keysBefore.has(keyId), `step ${step.step} from_skipped_key`).toBe(step.from_skipped_key);
+          expect(remoteBefore !== hex(state.dh_remote_pub32!), `step ${step.step} dh_step`).toBe(step.dh_step);
+          if (step.stored_skipped_keys) {
+            expect(stored, `step ${step.step} stored_skipped_keys`).toEqual(
+              step.stored_skipped_keys.map((e: any) => `${e.dh_pub_b64}:${e.n}`)
+            );
+          }
+          if (step.skipped_key_stored_at_step !== undefined) {
+            expect(storedAt.get(keyId), `step ${step.step}`).toBe(step.skipped_key_stored_at_step);
+          }
+          if (step.skipped_key_rule === "pn_skip") {
+            // Stored while reading a message on a newer ratchet key: the old chain's skip.
+            const storing = file.steps.find((x: any) => x.step === step.skipped_key_stored_at_step);
+            expect(messages.get(storing.message).header.dh_pub_b64).not.toBe(m.header.dh_pub_b64);
+            readFromPnSkip += 1;
+          }
           break;
         }
         case "save_and_reload": {
@@ -116,6 +144,8 @@ describe.each(PROVIDERS.map((p) => p.name))("ratchet-v2.json on %s", (providerNa
       }
     }
     expect(rng.remaining()).toBe(0);
+    // DR §3.5's old-chain skip is exercised: a message read from a key the pn skip stored.
+    expect(readFromPnSkip).toBeGreaterThan(0);
   });
 
   for (const r of file.refusals) {
