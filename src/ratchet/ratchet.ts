@@ -70,6 +70,14 @@ function assignState(target: RatchetState, src: RatchetState): void {
   target.skipped = src.skipped;
 }
 
+/**
+ * Keeps at most MAX_SKIPPED_KEYS skipped message keys. At the cap the oldest one
+ * (a Map iterates in insertion order) is dropped, so a long gap costs the oldest
+ * missing messages rather than refusing every later one. A message whose key was
+ * dropped is then refused: as a replay on the current receiving chain, by the
+ * AEAD on an earlier one. A single gap over MAX_SKIP_DERIVE still throws in
+ * deriveUntil.
+ */
 function storeSkipped(
   state: RatchetState,
   dhPub32: Uint8Array,
@@ -77,7 +85,8 @@ function storeSkipped(
   mk32: Uint8Array
 ): void {
   if (state.skipped.size >= MAX_SKIPPED_KEYS) {
-    throw new Error("Skipped message key limit exceeded");
+    const oldest = state.skipped.keys().next();
+    if (!oldest.done) state.skipped.delete(oldest.value);
   }
   state.skipped.set(skippedKeyId(dhPub32, n), mk32);
 }

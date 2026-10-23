@@ -4,7 +4,7 @@ import { serializeRatchetStateV1 } from "./serialization.js";
 import { DecryptFailedError, ReplayDetectedError } from "../errors.js";
 import { generateX25519Keypair } from "../crypto/x25519.js";
 import { randomBytes } from "@noble/ciphers/utils.js";
-import { MAX_PLAINTEXT_BYTES, MAX_SKIP_DERIVE } from "../crypto/limits.js";
+import { MAX_PLAINTEXT_BYTES, MAX_SKIP_DERIVE, MAX_SKIPPED_KEYS } from "../crypto/limits.js";
 import { bytesToBase64 } from "../encoding/base64.js";
 
 function encode(str: string): Uint8Array {
@@ -313,6 +313,33 @@ describe("replay detection", () => {
 
     expect(thrownBy(() => ratchetDecrypt({ state: bob, ...m0 }))).toBeInstanceOf(ReplayDetectedError);
     expect(snapshot(bob)).toBe(before);
+  });
+
+  it("at MAX_SKIPPED_KEYS the oldest skipped key is evicted, not the message refused", () => {
+    expect(MAX_SKIPPED_KEYS).toBe(2 * MAX_SKIP_DERIVE); // the fill below relies on it
+    const { alice, bob } = pair();
+    const sent = Array.from({ length: 3 * MAX_SKIP_DERIVE + 3 }, (_, n) => send(alice, `m${n}`));
+
+    // Two gaps of MAX_SKIP_DERIVE fill the cache: n = 0..999 and 1001..2000.
+    ratchetDecrypt({ state: bob, ...sent[MAX_SKIP_DERIVE]! });
+    ratchetDecrypt({ state: bob, ...sent[2 * MAX_SKIP_DERIVE + 1]! });
+    expect(bob.skipped.size).toBe(MAX_SKIPPED_KEYS);
+
+    // A further gap succeeds, evicting the oldest 1,000.
+    const last = sent[3 * MAX_SKIP_DERIVE + 2]!;
+    expect(new TextDecoder().decode(ratchetDecrypt({ state: bob, ...last }).plaintext)).toBe(
+      `m${3 * MAX_SKIP_DERIVE + 2}`
+    );
+    expect(bob.skipped.size).toBe(MAX_SKIPPED_KEYS);
+
+    // The newest skipped message still decrypts; the oldest, evicted, is a replay.
+    const newest = sent[3 * MAX_SKIP_DERIVE + 1]!;
+    expect(new TextDecoder().decode(ratchetDecrypt({ state: bob, ...newest }).plaintext)).toBe(
+      `m${3 * MAX_SKIP_DERIVE + 1}`
+    );
+    expect(thrownBy(() => ratchetDecrypt({ state: bob, ...sent[0]! }))).toBeInstanceOf(
+      ReplayDetectedError
+    );
   });
 
   it("a replay from an earlier receiving chain is not ReplayDetectedError", () => {
