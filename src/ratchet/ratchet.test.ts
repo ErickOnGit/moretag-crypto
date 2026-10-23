@@ -149,6 +149,24 @@ describe("Double Ratchet", () => {
     expect(m0.header).not.toHaveProperty("grp");
   });
 
+  it("DR §3.5: messages from the peer's previous chain still decrypt after its DH step (the pn skip)", () => {
+    const { alice, bob } = establishedPair(); // Bob has read Alice's first message (n 0)
+    const a1 = send(alice, "a1");
+    const a2 = send(alice, "a2"); // both delayed
+    const r0 = send(bob, "r0");
+    ratchetDecrypt({ state: alice, ...r0 }); // Alice's DH step: a new sending chain, pn 3
+    const a3 = send(alice, "a3");
+    expect(a3.header.dr.pn).toBe(3);
+    expect(a3.header.dr.dh_pub_b64).not.toBe(a1.header.dr.dh_pub_b64);
+
+    // Bob first stores the old chain's keys up to pn (n 1 and 2), then runs the DH step.
+    expect(text(ratchetDecrypt({ state: bob, ...a3 }).plaintext)).toBe("a3");
+    expect([...bob.skipped.keys()]).toEqual([`${a1.header.dr.dh_pub_b64}:1`, `${a1.header.dr.dh_pub_b64}:2`]);
+    expect(text(ratchetDecrypt({ state: bob, ...a2 }).plaintext)).toBe("a2");
+    expect(text(ratchetDecrypt({ state: bob, ...a1 }).plaintext)).toBe("a1");
+    expect(bob.skipped.size).toBe(0);
+  });
+
   it("handles out-of-order receive using skipped message keys", () => {
     const { alice, bob } = sessionPair();
     const m1 = send(alice, "m1");
