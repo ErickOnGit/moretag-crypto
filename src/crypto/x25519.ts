@@ -5,6 +5,7 @@
  */
 
 import { getPrimitives } from "./primitives.js";
+import { LowOrderKeyError } from "../errors.js";
 
 function clampScalar(k: Uint8Array): void {
   if (k.length !== 32) throw new TypeError("clampScalar expects 32 bytes");
@@ -66,20 +67,27 @@ export function x25519SharedSecret(
   const k = priv32.slice();
   clampScalar(k);
 
-  const ss = getPrimitives().x25519SharedSecret(k, pub32);
+  // With 32-byte inputs X25519 fails only on an all-zero output, which @noble and
+  // OpenSSL-family backends refuse themselves, each with its own error. Replace it,
+  // so every backend fails the same way and no provider text reaches the host.
+  let ss: Uint8Array;
+  try {
+    ss = getPrimitives().x25519SharedSecret(k, pub32);
+  } catch {
+    throw new LowOrderKeyError();
+  }
   if (ss.byteLength !== 32) {
     throw new TypeError(
       `Invalid shared secret length: expected 32 bytes, got ${ss.byteLength}`
     );
   }
-  // Low-order peer keys yield an all-zero secret (RFC 7748 §6.1 MAY-check).
-  // @noble and OpenSSL-family backends refuse them first, each with its own
-  // error; this covers a backend that returns the zeros instead. Constant
-  // time: OR every byte, with no early exit on the first non-zero one.
+  // Low-order peer keys yield an all-zero secret (RFC 7748 §6.1 MAY-check); this
+  // covers a backend that returns the zeros instead of refusing. Constant time:
+  // OR every byte, with no early exit on the first non-zero one.
   let acc = 0;
   for (let i = 0; i < ss.length; i++) acc |= ss[i]!;
   if (acc === 0) {
-    throw new Error("x25519SharedSecret: all-zero shared secret rejected");
+    throw new LowOrderKeyError();
   }
   return ss;
 }

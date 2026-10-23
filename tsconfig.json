@@ -49,6 +49,7 @@
   "exclude": [
     "**/*.test.ts",
     "**/*.spec.ts",
+    "src/test-fixtures.ts",
     "dist/**",
     "node_modules/**"
   ]
