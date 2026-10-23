@@ -30,8 +30,9 @@ import { kdfRootAndChainKey, kdfChainKey } from "../crypto/kdf.js";
 import { aeadDecryptXChaCha20Poly1305, aeadEncryptXChaCha20Poly1305, randomNonce24 } from "../crypto/aead.js";
 import { buildDeliveryAadFromDecodedV2 } from "../crypto/aad.js";
 import { parseAssociatedDataV2 } from "../crypto/ad.js";
-import { bytesToBase64, decodeStrictBase64 } from "../encoding/base64.js";
+import { bytesToBase64 } from "../encoding/base64.js";
 import {
+  decodeCiphertextV2,
   decodeGroupSlotV2,
   decodeHeaderV2,
   type DecodedHeaderV2,
@@ -42,14 +43,12 @@ import {
   MAX_SKIP_DERIVE,
   MAX_SKIPPED_KEYS,
   MAX_PLAINTEXT_BYTES,
-  MAX_CIPHERTEXT_BYTES,
 } from "../crypto/limits.js";
 import { timingSafeEqual } from "../crypto/validation.js";
 import { wipe } from "../crypto/wipe.js";
 import {
   DecryptFailedError,
   DeviceMismatchError,
-  InvalidWireError,
   NoSendingChainError,
   ReplayDetectedError,
   SkipLimitError,
@@ -324,23 +323,6 @@ export function ratchetEncrypt(args: {
   return { state, header, ciphertext_b64: bytesToBase64(ciphertext) };
 }
 
-/** A message's ciphertext: strict base64, at most MAX_CIPHERTEXT_BYTES decoded. */
-function decodeCiphertext(ciphertext_b64: unknown): Uint8Array {
-  if (typeof ciphertext_b64 !== "string" || ciphertext_b64.length > Math.ceil(MAX_CIPHERTEXT_BYTES / 3) * 4) {
-    throw new InvalidWireError("invalid_header", "ciphertext_b64");
-  }
-  let ciphertext: Uint8Array;
-  try {
-    ciphertext = decodeStrictBase64("ciphertext_b64", ciphertext_b64);
-  } catch {
-    throw new InvalidWireError("invalid_header", "ciphertext_b64");
-  }
-  if (ciphertext.byteLength > MAX_CIPHERTEXT_BYTES) {
-    throw new InvalidWireError("invalid_header", "ciphertext_b64");
-  }
-  return ciphertext;
-}
-
 /**
  * Decrypts one message and advances `state` in place, only on success: all work
  * runs on a copy, so a throw leaves `state` exactly as it was.
@@ -380,7 +362,7 @@ export function ratchetDecrypt(args: {
   if (h.sender_device_id !== peer || h.recipient_device_id !== self) {
     throw new DeviceMismatchError();
   }
-  const ciphertext = decodeCiphertext(args.ciphertext_b64);
+  const ciphertext = decodeCiphertextV2(args.ciphertext_b64);
   const aad = buildDeliveryAadFromDecodedV2(state.ad, h);
   const working = cloneRatchetState(state);
   let committed = false;

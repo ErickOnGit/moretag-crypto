@@ -4,7 +4,7 @@
  */
 
 import type { HeaderProtoV2 } from "../wire/header.js";
-import { decodeHeaderV2 } from "../wire/header.js";
+import { decodeCiphertextV2, decodeHeaderV2 } from "../wire/header.js";
 import { buildDeliveryAadFromDecodedV2 } from "./aad.js";
 import {
   aeadEncryptXChaCha20Poly1305,
@@ -26,7 +26,8 @@ function assertPlaintextSize(plaintext: Uint8Array): void {
   }
 }
 
-function decodeCiphertext(ciphertext_b64: string): Uint8Array {
+/** A local seal's ciphertext, which the host holds: a TypeError when malformed. */
+function decodeLocalCiphertext(ciphertext_b64: string): Uint8Array {
   const bytes = decodeStrictBase64("ciphertext_b64", ciphertext_b64);
   if (bytes.byteLength > MAX_CIPHERTEXT_BYTES) {
     throw new TypeError(`Ciphertext too large: max ${MAX_CIPHERTEXT_BYTES} bytes`);
@@ -58,6 +59,8 @@ export function sealDeliveryV2(args: {
 /**
  * Opens one message sealed by {@link sealDeliveryV2}.
  *
+ * @throws InvalidWireError `invalid_header` for a malformed header, or a
+ *   `ciphertext_b64` that is not strict base64 or is over MAX_CIPHERTEXT_BYTES
  * @throws DecryptFailedError if authentication fails (wrong key, AD, header or ciphertext)
  */
 export function openDeliveryV2(args: {
@@ -68,7 +71,7 @@ export function openDeliveryV2(args: {
 }): Uint8Array {
   const h = decodeHeaderV2(args.header);
   const aad = buildDeliveryAadFromDecodedV2(args.ad, h);
-  const ciphertext = decodeCiphertext(args.ciphertext_b64);
+  const ciphertext = decodeCiphertextV2(args.ciphertext_b64);
   return aeadDecryptXChaCha20Poly1305(args.key32, h.nonce24, ciphertext, aad);
 }
 
@@ -109,7 +112,7 @@ export function openLocalV2(args: {
   ciphertext_b64: string;
 }): Uint8Array {
   const nonce24 = decodeStrictBase64("nonce_b64", args.nonce_b64);
-  const ciphertext = decodeCiphertext(args.ciphertext_b64);
+  const ciphertext = decodeLocalCiphertext(args.ciphertext_b64);
   return aeadDecryptXChaCha20Poly1305(args.key32, nonce24, ciphertext, args.aad);
 }
 

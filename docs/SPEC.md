@@ -369,7 +369,7 @@ identifier and no stored value. Hosts log `name` and `code`, not the message.
 | `NoSendingChainError` | `no_sending_chain` | encrypt on a responder state before its first received message | no |
 | `SkipLimitError` | `skip_limit_exceeded` | a header's `n`, or its `pn` before a DH step, more than MAX_SKIP (1,000) past the receiving chain's next number; raised before the AEAD, so a peer or the server can cause it | no |
 | `InvalidDeviceIdError` | `invalid_device_id` | a device id that is not a canonical UUID | no |
-| `InvalidWireError` | `invalid_header`, `invalid_grp`, `invalid_session_init`, `invalid_bundle` | a wire object with the wrong shape, base64, length or id range; a message's `ciphertext_b64` that is not strict base64 or decodes to more than 1,100,000 bytes (`invalid_header`, field `ciphertext_b64`) | no |
+| `InvalidWireError` | `invalid_header`, `invalid_grp`, `invalid_session_init`, `invalid_bundle` | a wire object with the wrong shape, base64, length or id range; a message's `ciphertext_b64` (in `ratchetDecrypt` and `openDeliveryV2`) that is not strict base64 or decodes to more than 1,100,000 bytes (`invalid_header`, field `ciphertext_b64`) | no |
 | `BadSignatureError` | `bad_signature` | a bundle's signed-prekey signature does not verify | no; nothing pinned |
 | `LowOrderKeyError` | `low_order_key` | an X25519 agreement gives the all-zero output (a low-order public key) | no |
 | `IdentityMismatchError` | `identity_mismatch` | a pinned device presents other identity keys; the registry records the block | the registry's block mark only |
@@ -380,10 +380,14 @@ identifier and no stored value. Hosts log `name` and `code`, not the message.
 `low_order_key`, `bad_signature`, `invalid_grp`, `invalid_session_init`,
 `invalid_header`, `invalid_bundle` and `skip_limit_exceeded` are the library's own
 codes for refusals the design named no code for; the vector tests map them. Every
-refusal a peer or the server can cause through a header, a sidecar, a bundle or a
-ciphertext is typed. Not typed, because only the host's own data or code can cause
-them: corrupt stored state (TypeError, above), a caller's key of the wrong length,
-and a plaintext over the encrypt limit (TypeError).
+refusal that `ratchetDecrypt`, `openDeliveryV2`, the bootstraps and the wire
+validators raise on a header, a sidecar, a bundle or a ciphertext is typed. Not
+typed (a TypeError with a field name, never a value): corrupt stored state
+(above); a caller's key of the wrong length; a plaintext over the encrypt limit;
+`openLocalV2`'s checks on the nonce and ciphertext the host passes (a host that
+reads its self copy from a server row treats that like `decrypt_failed`); and
+`openAttachmentV1`'s checks on `key_b64` and `nonce_b64`, which come from inside
+a message that already authenticated.
 
 ## 12. What the host must do
 

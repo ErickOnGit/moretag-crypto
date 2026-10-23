@@ -10,6 +10,7 @@
 import { InvalidWireError } from "../errors.js";
 import { decodeStrictBase64 } from "../encoding/base64.js";
 import { assertCanonicalDeviceId, isCanonicalDeviceId } from "../crypto/device-id.js";
+import { MAX_CIPHERTEXT_BYTES } from "../crypto/limits.js";
 
 /** Double Ratchet header fields (DR §3.1): the sender's ratchet key and counters. */
 export interface DoubleRatchetHeader {
@@ -119,6 +120,27 @@ export function decodeHeaderV2(x: unknown): DecodedHeaderV2 {
     n: x.dr.n,
     grp,
   };
+}
+
+/**
+ * Decodes a message's `ciphertext_b64`, the field beside its header: strict
+ * base64, at most MAX_CIPHERTEXT_BYTES decoded, else {@link InvalidWireError}
+ * `invalid_header` naming `ciphertext_b64`. An over-long string is refused
+ * before it is decoded.
+ */
+export function decodeCiphertextV2(ciphertext_b64: unknown): Uint8Array {
+  const field = "ciphertext_b64";
+  if (typeof ciphertext_b64 !== "string" || ciphertext_b64.length > Math.ceil(MAX_CIPHERTEXT_BYTES / 3) * 4) {
+    throw new InvalidWireError("invalid_header", field);
+  }
+  let ciphertext: Uint8Array;
+  try {
+    ciphertext = decodeStrictBase64(field, ciphertext_b64);
+  } catch {
+    throw new InvalidWireError("invalid_header", field);
+  }
+  if (ciphertext.byteLength > MAX_CIPHERTEXT_BYTES) throw new InvalidWireError("invalid_header", field);
+  return ciphertext;
 }
 
 /** Runtime validator for {@link HeaderProtoV2}; see {@link decodeHeaderV2}. */

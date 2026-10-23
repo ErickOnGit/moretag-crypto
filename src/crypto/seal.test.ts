@@ -92,19 +92,29 @@ test("a malformed AD is refused", () => {
   ).toThrow(TypeError);
 });
 
-test("invalid base64 for ciphertext_b64 throws TypeError", () => {
-  expect(() =>
-    openDeliveryV2({ key32: randomBytes(32), ad: ad(), header: header(), ciphertext_b64: "!!!" })
-  ).toThrow(TypeError);
+test("a delivery ciphertext that is not strict base64, or too large, is invalid_header (ciphertext_b64)", () => {
+  const huge = bytesToBase64(new Uint8Array(MAX_CIPHERTEXT_BYTES + 3));
+  for (const ciphertext_b64 of ["!!!", huge]) {
+    let err: unknown;
+    try {
+      openDeliveryV2({ key32: randomBytes(32), ad: ad(), header: header(), ciphertext_b64 });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(InvalidWireError);
+    expect((err as InvalidWireError).code).toBe("invalid_header");
+    expect((err as InvalidWireError).message).toBe("Invalid header: ciphertext_b64");
+  }
 });
 
-test("plaintext and ciphertext limits are enforced", () => {
+test("plaintext and local-seal ciphertext limits are enforced", () => {
   expect(() =>
     sealDeliveryV2({ key32: randomBytes(32), ad: ad(), header: header(), plaintext: new Uint8Array(MAX_PLAINTEXT_BYTES + 1) })
   ).toThrow(/Plaintext too large/);
   const huge = bytesToBase64(new Uint8Array(MAX_CIPHERTEXT_BYTES + 3));
+  const aad = buildSelfSealAadV2(ALICE_DEVICE);
   expect(() =>
-    openDeliveryV2({ key32: randomBytes(32), ad: ad(), header: header(), ciphertext_b64: huge })
+    openLocalV2({ key32: randomBytes(32), aad, nonce_b64: bytesToBase64(randomBytes(24)), ciphertext_b64: huge })
   ).toThrow(/Ciphertext too large/);
 });
 
