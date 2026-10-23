@@ -110,7 +110,7 @@ const { plaintext: pt, grp: slot } = ratchetDecrypt({ state, header, ciphertext_
 - `ratchetDecrypt` is all-or-nothing: it works on a copy and changes `state` only on success.
 - The group slot is authenticated and returned. Pairwise messages leave it out and get `null`. When groups exist, the host must check `gid` against the conversation and `epoch` against the server's membership epoch.
 - With a store, use `ratchetEncryptWithStore(store, id, { plaintext })` and `ratchetDecryptWithStore(store, id, { header, ciphertext_b64 })`; each success saves the next version.
-- Skipped message keys: a single gap over 1,000 throws; the cache keeps 2,000 by dropping the oldest.
+- Skipped message keys: a single gap over 1,000 is `SkipLimitError` (`skip_limit_exceeded`); the cache keeps 2,000 by dropping the oldest.
 
 ## 4. Errors the host meets
 
@@ -123,9 +123,10 @@ Every typed error has a stable `code`. Messages never contain ids or stored valu
 | `unknown_spk` | responder bootstrap, commit | The message cannot be read. |
 | `device_mismatch` | bootstraps, decrypt | The message cannot be read; nothing was saved. |
 | `decrypt_failed` | decrypt | The message cannot be read on this state. |
+| `skip_limit_exceeded` | decrypt | The header claims more than 1,000 missing messages; it is unauthenticated, so treat it like `decrypt_failed`. Nothing was saved. |
 | `identity_mismatch` | initiator bootstrap, `assertOrPin` | Blocked until the user accepts the new identity (`approveRotation`). |
 | `no_sending_chain` | encrypt | A responder state that has not received yet. |
-| `invalid_header`, `invalid_grp`, `invalid_session_init`, `invalid_bundle`, `invalid_device_id` | validators | Malformed input; nothing was saved. |
+| `invalid_header`, `invalid_grp`, `invalid_session_init`, `invalid_bundle`, `invalid_device_id` | validators, decrypt (a bad or oversize `ciphertext_b64` is `invalid_header`) | Malformed input; nothing was saved. |
 | `bad_signature` | initiator bootstrap | The bundle is forged or corrupt; nothing was pinned. |
 | `low_order_key` | X3DH, DH step | A malicious key; nothing was saved. |
 | `self_session` | bootstraps, AD | Never open a session with your own device. |

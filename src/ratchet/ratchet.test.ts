@@ -13,13 +13,20 @@ import {
   InvalidWireError,
   NoSendingChainError,
   ReplayDetectedError,
+  SkipLimitError,
 } from "../errors.js";
 import { generateEd25519Keypair } from "../crypto/ed25519.js";
 import { generateX25519Keypair, x25519SharedSecret } from "../crypto/x25519.js";
 import { kdfRootAndChainKey } from "../crypto/kdf.js";
 import { buildAssociatedDataV2 } from "../crypto/ad.js";
 import { randomBytes } from "@noble/ciphers/utils.js";
-import { MAX_PLAINTEXT_BYTES, MAX_SKIP_DERIVE, MAX_SKIPPED_KEYS } from "../crypto/limits.js";
+import {
+  MAX_CIPHERTEXT_BYTES,
+  MAX_PLAINTEXT_BYTES,
+  MAX_SKIP_DERIVE,
+  MAX_SKIPPED_KEYS,
+} from "../crypto/limits.js";
+import { bytesToBase64 } from "../encoding/base64.js";
 import { x3dhResponderBootstrapV2 } from "../x3dh/session.js";
 import {
   ALICE_DEVICE,
@@ -254,14 +261,77 @@ describe("Double Ratchet", () => {
     expect(snapshot(alice)).toBe(before);
   });
 
-  it("enforces receive derivation window limit", () => {
+  it("a gap over MAX_SKIP is skip_limit_exceeded, on the current chain and on pn before a DH step, state unchanged", () => {
     const { alice, bob } = establishedPair();
     const m = send(alice, "ok");
-    const header: HeaderProtoV2 = { ...m.header, dr: { ...m.header.dr, n: m.header.dr.n + MAX_SKIP_DERIVE + 5 } };
-    expect(() => ratchetDecrypt({ state: bob, header, ciphertext_b64: m.ciphertext_b64 })).toThrow(
-      /Max skip derivation window exceeded/
+    const nGap: HeaderProtoV2 = { ...m.header, dr: { ...m.header.dr, n: bob.nr + MAX_SKIP_DERIVE + 1 } };
+    const reply = send(bob, "reply");
+    const bobAfterReply = snapshot(bob);
+    // Alice's next chain claims a previous chain one past the limit.
+    const pnGap: HeaderProtoV2 = {
+      ...m.header,
+      dr: { dh_pub_b64: bytesToBase64(generateX25519Keypair().pub32), pn: bob.nr + MAX_SKIP_DERIVE + 1, n: 0 },
+    };
+    for (const header of [nGap, pnGap]) {
+      const err = thrownBy(() => ratchetDecrypt({ state: bob, header, ciphertext_b64: m.ciphertext_b64 }));
+      expect(err).toBeInstanceOf(SkipLimitError);
+      expect((err as SkipLimitError).code).toBe("skip_limit_exceeded");
+    }
+    expect(snapshot(bob)).toBe(bobAfterReply);
+    // Exactly MAX_SKIP is allowed: the gap is derived, then the AEAD refuses the forgery.
+    const atLimit: HeaderProtoV2 = { ...m.header, dr: { ...m.header.dr, n: bob.nr + MAX_SKIP_DERIVE } };
+    expect(thrownBy(() => ratchetDecrypt({ state: bob, header: atLimit, ciphertext_b64: m.ciphertext_b64 }))).toBeInstanceOf(
+      DecryptFailedError
     );
     expect(text(ratchetDecrypt({ state: bob, ...m }).plaintext)).toBe("ok");
+    expect(text(ratchetDecrypt({ state: alice, ...reply }).plaintext)).toBe("reply");
+  });
+
+  it("a header naming the responder's signed prekey before the first reply is decrypt_failed, state unchanged", () => {
+    // The initiator keeps DHr = SPK_B, which is public in the bundle, and has no
+    // receiving chain until the first reply. A header on that key reaches no chain.
+    const { alice, bob, bobKeys } = sessionPair();
+    const m0 = send(alice, "x");
+    const forged: HeaderProtoV2 = {
+      v: 2,
+      alg: "xchacha20poly1305",
+      nonce_b64: m0.header.nonce_b64,
+      sender_device_id: BOB_DEVICE,
+      recipient_device_id: ALICE_DEVICE,
+      dr: { dh_pub_b64: bytesToBase64(bobKeys.getCurrentSignedPrekey().pub32), pn: 0, n: 0 },
+    };
+    const before = snapshot(alice);
+    for (const n of [0, 3]) {
+      const err = thrownBy(() =>
+        ratchetDecrypt({ state: alice, header: { ...forged, dr: { ...forged.dr, n } }, ciphertext_b64: m0.ciphertext_b64 })
+      );
+      expect(err).toBeInstanceOf(DecryptFailedError);
+      expect((err as DecryptFailedError).code).toBe("decrypt_failed");
+    }
+    expect(snapshot(alice)).toBe(before);
+    ratchetDecrypt({ state: bob, ...m0 });
+    const reply = send(bob, "reply");
+    expect(text(ratchetDecrypt({ state: alice, ...reply }).plaintext)).toBe("reply");
+  });
+
+  it("a ciphertext that is not strict base64, or over the size limit, is invalid_header, state unchanged", () => {
+    const { alice, bob } = sessionPair();
+    const m = send(alice, "x");
+    const before = snapshot(bob);
+    const oversize = bytesToBase64(new Uint8Array(MAX_CIPHERTEXT_BYTES + 1));
+    for (const ciphertext_b64 of ["", "not base64!", "AB==", m.ciphertext_b64.slice(1), 42, null, oversize]) {
+      const err = thrownBy(() => ratchetDecrypt({ state: bob, header: m.header, ciphertext_b64: ciphertext_b64 as string }));
+      expect(err).toBeInstanceOf(InvalidWireError);
+      expect((err as InvalidWireError).code).toBe("invalid_header");
+      expect((err as InvalidWireError).message).toBe("Invalid header: ciphertext_b64");
+    }
+    expect(snapshot(bob)).toBe(before);
+    // Exactly at the limit passes the size check and fails the AEAD.
+    const atLimit = bytesToBase64(new Uint8Array(MAX_CIPHERTEXT_BYTES));
+    expect(thrownBy(() => ratchetDecrypt({ state: bob, header: m.header, ciphertext_b64: atLimit }))).toBeInstanceOf(
+      DecryptFailedError
+    );
+    expect(text(ratchetDecrypt({ state: bob, ...m }).plaintext)).toBe("x");
   });
 
   it("rejects non-integer or negative counters in headers", () => {

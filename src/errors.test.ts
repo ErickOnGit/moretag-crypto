@@ -16,6 +16,7 @@ import {
   ReplayDetectedError,
   SelfSessionError,
   SessionNotFoundError,
+  SkipLimitError,
   UnknownPrekeyError,
 } from "./errors.js";
 import { X3DHPrekeyManagerV2 } from "./x3dh/prekey-manager.js";
@@ -88,6 +89,7 @@ describe("typed errors", () => {
     [new DeviceMismatchError(), "DeviceMismatchError", "device_mismatch"],
     [new SelfSessionError(), "SelfSessionError", "self_session"],
     [new NoSendingChainError(), "NoSendingChainError", "no_sending_chain"],
+    [new SkipLimitError(), "SkipLimitError", "skip_limit_exceeded"],
     [new InvalidDeviceIdError(), "InvalidDeviceIdError", "invalid_device_id"],
     [new InvalidWireError("invalid_header", "dr.n"), "InvalidWireError", "invalid_header"],
     [new InvalidWireError("invalid_grp", "grp"), "InvalidWireError", "invalid_grp"],

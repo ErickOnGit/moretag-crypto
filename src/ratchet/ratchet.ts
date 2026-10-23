@@ -10,8 +10,9 @@
  * - Per-message AAD = AD || H (crypto/aad.ts). The header's device ids come from AD
  *   by role; a received header whose ids differ from AD is refused before any key
  *   derivation or AEAD ({@link DeviceMismatchError}).
- * - Skipped keys: a single gap over MAX_SKIP_DERIVE (1,000, DR §3.5 MAX_SKIP)
- *   errors; the cache keeps MAX_SKIPPED_KEYS (2,000) by evicting the oldest.
+ * - Skipped keys: a single gap over MAX_SKIP_DERIVE (1,000, DR §3.5 MAX_SKIP) is
+ *   {@link SkipLimitError}; the cache keeps MAX_SKIPPED_KEYS (2,000) by evicting
+ *   the oldest.
  *
  * Random draws (normative): ratchetEncrypt draws one 24-byte nonce; ratchetDecrypt
  * draws one 32-byte DHs private exactly when the header's ratchet key differs from
@@ -45,7 +46,14 @@ import {
 } from "../crypto/limits.js";
 import { timingSafeEqual } from "../crypto/validation.js";
 import { wipe } from "../crypto/wipe.js";
-import { DeviceMismatchError, NoSendingChainError, ReplayDetectedError } from "../errors.js";
+import {
+  DecryptFailedError,
+  DeviceMismatchError,
+  InvalidWireError,
+  NoSendingChainError,
+  ReplayDetectedError,
+  SkipLimitError,
+} from "../errors.js";
 import { skippedKeyId } from "./skipped-id.js";
 
 /** Which side of the X3DH setup this state belongs to, for the whole session. */
@@ -151,10 +159,13 @@ function storeSkipped(state: RatchetState, dhPub32: Uint8Array, n: number, mk32:
   state.skipped.set(skippedKeyId(dhPub32, n), mk32);
 }
 
-/** DR §3.4 SkipMessageKeys: stores the receiving chain's keys up to `until`. */
+/**
+ * DR §3.4 SkipMessageKeys: stores the receiving chain's keys up to `until`.
+ * @throws SkipLimitError when `until` is more than MAX_SKIP past the next number
+ */
 function skipMessageKeys(state: RatchetState, until: number): void {
   if (until - state.nr > MAX_SKIP_DERIVE) {
-    throw new Error("Max skip derivation window exceeded");
+    throw new SkipLimitError();
   }
   if (state.ck_r32 === undefined || state.dh_remote_pub32 === undefined) return;
   while (state.nr < until) {
@@ -313,6 +324,23 @@ export function ratchetEncrypt(args: {
   return { state, header, ciphertext_b64: bytesToBase64(ciphertext) };
 }
 
+/** A message's ciphertext: strict base64, at most MAX_CIPHERTEXT_BYTES decoded. */
+function decodeCiphertext(ciphertext_b64: unknown): Uint8Array {
+  if (typeof ciphertext_b64 !== "string" || ciphertext_b64.length > Math.ceil(MAX_CIPHERTEXT_BYTES / 3) * 4) {
+    throw new InvalidWireError("invalid_header", "ciphertext_b64");
+  }
+  let ciphertext: Uint8Array;
+  try {
+    ciphertext = decodeStrictBase64("ciphertext_b64", ciphertext_b64);
+  } catch {
+    throw new InvalidWireError("invalid_header", "ciphertext_b64");
+  }
+  if (ciphertext.byteLength > MAX_CIPHERTEXT_BYTES) {
+    throw new InvalidWireError("invalid_header", "ciphertext_b64");
+  }
+  return ciphertext;
+}
+
 /**
  * Decrypts one message and advances `state` in place, only on success: all work
  * runs on a copy, so a throw leaves `state` exactly as it was.
@@ -324,6 +352,14 @@ export function ratchetEncrypt(args: {
  * next expected number is {@link ReplayDetectedError}, raised before any key
  * derivation or AEAD; otherwise the DH step runs when dh_pub differs from DHr (or
  * DHr is absent), the chain is skipped to n, and the AEAD runs under AD || H.
+ *
+ * Refusals, each with a stable code and the state unchanged: a malformed header,
+ * or a `ciphertext_b64` that is not strict base64 or is over MAX_CIPHERTEXT_BYTES,
+ * is {@link InvalidWireError} (`invalid_header`); a gap over MAX_SKIP is
+ * {@link SkipLimitError}; a header on the current ratchet key when no receiving
+ * chain exists yet (an initiator before the first reply, sent its peer's public
+ * signed prekey as `dh_pub`) cannot be authentic and is {@link DecryptFailedError},
+ * as is any AEAD failure.
  *
  * Limits: a replay from an earlier receiving chain is not recognised and fails
  * authentication instead ({@link DecryptFailedError}), and nothing here survives
@@ -344,10 +380,7 @@ export function ratchetDecrypt(args: {
   if (h.sender_device_id !== peer || h.recipient_device_id !== self) {
     throw new DeviceMismatchError();
   }
-  const ciphertext = decodeStrictBase64("ciphertext_b64", args.ciphertext_b64);
-  if (ciphertext.byteLength > MAX_CIPHERTEXT_BYTES) {
-    throw new TypeError(`Ciphertext too large: max ${MAX_CIPHERTEXT_BYTES} bytes`);
-  }
+  const ciphertext = decodeCiphertext(args.ciphertext_b64);
   const aad = buildDeliveryAadFromDecodedV2(state.ad, h);
   const working = cloneRatchetState(state);
   let committed = false;
@@ -374,7 +407,9 @@ export function ratchetDecrypt(args: {
       dhRatchetStep(working, h.dh_pub32);
     }
     skipMessageKeys(working, h.n);
-    if (working.ck_r32 === undefined) throw new Error("Receive chain not initialized");
+    // Same ratchet key and no receiving chain: only an initiator before the first
+    // reply, sent its peer's public signed prekey. No real message does that.
+    if (working.ck_r32 === undefined) throw new DecryptFailedError();
     const step = kdfChainKey(working.ck_r32);
     mk32 = step.mk32;
     wipe(working.ck_r32);

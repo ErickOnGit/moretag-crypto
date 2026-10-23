@@ -94,6 +94,7 @@ export {
   DeviceMismatchError,
   SelfSessionError,
   NoSendingChainError,
+  SkipLimitError,
   InvalidDeviceIdError,
   InvalidWireError,
   BadSignatureError,

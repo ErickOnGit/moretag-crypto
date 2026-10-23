@@ -95,7 +95,7 @@ const { plaintext: received } = ratchetDecrypt({ state: bobState, header, cipher
 Every typed error has a stable `code` (table in `docs/SPEC.md` §11):
 `ReplayDetectedError`, `DecryptFailedError`, `UnknownPrekeyError`,
 `DeviceMismatchError`, `SelfSessionError`, `NoSendingChainError`,
-`InvalidDeviceIdError`, `InvalidWireError`, `BadSignatureError`,
+`SkipLimitError`, `InvalidDeviceIdError`, `InvalidWireError`, `BadSignatureError`,
 `LowOrderKeyError`, `IdentityMismatchError`, `SessionNotFoundError`,
 `RatchetStoreConflictError`. Messages never name an id or a stored value; log
 `name` and `code`.

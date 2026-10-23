@@ -154,6 +154,21 @@ export class NoSendingChainError extends Error {
   }
 }
 
+/**
+ * Thrown when a received header's message number (or, before a DH step, its `pn`)
+ * lies more than MAX_SKIP (1,000, DR §3.5) past the receiving chain's next number.
+ * Raised before any AEAD, so the header is unauthenticated: a peer or the server
+ * can cause it. Nothing is stored.
+ */
+export class SkipLimitError extends Error {
+  readonly code = "skip_limit_exceeded" as const;
+
+  constructor() {
+    super("Message gap exceeds the skip limit");
+    this.name = "SkipLimitError";
+  }
+}
+
 /** Thrown when a device id is not a canonical lowercase UUID string. */
 export class InvalidDeviceIdError extends TypeError {
   readonly code = "invalid_device_id" as const;
@@ -174,7 +189,9 @@ export type InvalidWireCode =
 /**
  * Thrown when a wire object (header, its group slot, session_init, prekey bundle)
  * has the wrong shape: a missing or extra-typed field, bad base64, a wrong decoded
- * length, an id out of range. The message names the field, never its value.
+ * length, an id out of range. A message's `ciphertext_b64` that is not strict
+ * base64 or is over MAX_CIPHERTEXT_BYTES is `invalid_header` with that field. The
+ * message names the field, never its value.
  */
 export class InvalidWireError extends TypeError {
   readonly code: InvalidWireCode;

@@ -60,7 +60,7 @@ arbitrary start id, `consumeOneTimePrekey`, the v1 trust wrappers.
 | AEAD | XChaCha20-Poly1305 under the message key, random 24-byte nonce carried in the header (DR §3.1) | [option] |
 | Associated data | AD (§5) ‖ H (§6.2), the Double Ratchet's CONCAT(AD, header) (DR §3.1, §3.4) | [spec] |
 | Header encryption | none (DR §4) | [option] |
-| MAX_SKIP | a single gap over 1,000 is an error (DR §3.5); the cache keeps 2,000 by evicting the oldest | [option] |
+| MAX_SKIP | a single gap over 1,000 is `skip_limit_exceeded` (DR §3.5); the cache keeps 2,000 by evicting the oldest | [option] |
 | Base64 | standard alphabet, padded, canonical: non-zero padding bits are refused | — |
 | CBOR | shortest form (RFC 8949 §4.2.1), byte strings untagged, integers of 2^32 and above as integers | — |
 
@@ -230,18 +230,25 @@ on success. Order:
 
 1. Check the header (`invalid_header`, `invalid_device_id`, `invalid_grp`).
 2. Its ids must be the peer's (sender) and this device's (recipient) as AD names
-   them (`device_mismatch`), before any key derivation or AEAD.
+   them (`device_mismatch`), before any key derivation or AEAD. Then the
+   ciphertext must be strict base64 of at most 1,100,000 bytes (`invalid_header`,
+   field `ciphertext_b64`).
 3. A stored skipped key for (dh_pub, n): decrypt with it and delete it.
 4. Otherwise, on the current receiving chain (dh_pub = DHr, CKr present), `n < Nr`
    is `replay_detected`, before any key derivation or AEAD.
 5. Otherwise, when dh_pub differs from DHr or DHr is absent: store the old chain's
-   skipped keys up to `pn`, then the DH step (DR §3.4): `PN = Ns; Ns = Nr = 0;
-   DHr = dh_pub; RK, CKr = KDF_RK(RK, DH(DHs, DHr))`; a fresh DHs (one 32-byte
-   draw); `RK, CKs = KDF_RK(RK, DH(DHs, DHr))`.
-6. Store skipped keys up to `n`, step CKr for the message key, AEAD under AD ‖ H
-   (`decrypt_failed`).
+   skipped keys up to `pn` (`skip_limit_exceeded` past MAX_SKIP), then the DH
+   step (DR §3.4): `PN = Ns; Ns = Nr = 0; DHr = dh_pub;
+   RK, CKr = KDF_RK(RK, DH(DHs, DHr))`; a fresh DHs (one 32-byte draw);
+   `RK, CKs = KDF_RK(RK, DH(DHs, DHr))`.
+6. Store skipped keys up to `n` (`skip_limit_exceeded` past MAX_SKIP). With no
+   CKr (dh_pub = DHr on an initiator before the first reply, which only a forged
+   header naming the responder's signed prekey reaches) the message cannot be
+   authentic: `decrypt_failed`. Otherwise step CKr for the message key, AEAD under
+   AD ‖ H (`decrypt_failed`).
 
-**Skipped keys.** Keyed `base64(dh_pub):n`. A single gap over 1,000 is an error.
+**Skipped keys.** Keyed `base64(dh_pub):n`. A single gap over 1,000 is
+`skip_limit_exceeded`.
 At 2,000 the oldest key is evicted (and wiped), so a long gap costs the oldest
 missing messages rather than refusing every later one; an evicted message is then
 `replay_detected` on the current chain or `decrypt_failed` on an earlier one.
@@ -346,13 +353,14 @@ identifier and no stored value. Hosts log `name` and `code`, not the message.
 | Class | `code` | Raised when | State changed? |
 |---|---|---|---|
 | `ReplayDetectedError` | `replay_detected` | a message on the current receiving chain whose key is already used | no |
-| `DecryptFailedError` | `decrypt_failed` | the AEAD refuses (wrong key, AD, header, ciphertext; an earlier-chain replay) | no |
+| `DecryptFailedError` | `decrypt_failed` | the AEAD refuses (wrong key, AD, header, ciphertext; an earlier-chain replay); a header on the current ratchet key when there is no receiving chain yet (an initiator before the first reply, sent the responder's public signed prekey as `dh_pub`), which no real message does | no |
 | `UnknownPrekeyError` | `unknown_spk`, `unknown_opk` | a setup names a prekey this device does not hold | no |
 | `DeviceMismatchError` | `device_mismatch` | a bundle for another device; a sidecar whose sender differs from the row or whose recipient is not this device; header ids differing from AD | no |
 | `SelfSessionError` | `self_session` | both ends would be the same device | no |
 | `NoSendingChainError` | `no_sending_chain` | encrypt on a responder state before its first received message | no |
+| `SkipLimitError` | `skip_limit_exceeded` | a header's `n`, or its `pn` before a DH step, more than MAX_SKIP (1,000) past the receiving chain's next number; raised before the AEAD, so a peer or the server can cause it | no |
 | `InvalidDeviceIdError` | `invalid_device_id` | a device id that is not a canonical UUID | no |
-| `InvalidWireError` | `invalid_header`, `invalid_grp`, `invalid_session_init`, `invalid_bundle` | a wire object with the wrong shape, base64, length or id range | no |
+| `InvalidWireError` | `invalid_header`, `invalid_grp`, `invalid_session_init`, `invalid_bundle` | a wire object with the wrong shape, base64, length or id range; a message's `ciphertext_b64` that is not strict base64 or decodes to more than 1,100,000 bytes (`invalid_header`, field `ciphertext_b64`) | no |
 | `BadSignatureError` | `bad_signature` | a bundle's signed-prekey signature does not verify | no; nothing pinned |
 | `LowOrderKeyError` | `low_order_key` | an X25519 agreement gives the all-zero output (a low-order public key) | no |
 | `IdentityMismatchError` | `identity_mismatch` | a pinned device presents other identity keys; the registry records the block | the registry's block mark only |
@@ -360,10 +368,12 @@ identifier and no stored value. Hosts log `name` and `code`, not the message.
 | `RatchetStoreConflictError` | `store_conflict` | an optimistic store update lost a race | no |
 
 `low_order_key`, `bad_signature`, `invalid_grp`, `invalid_session_init`,
-`invalid_header` and `invalid_bundle` are the library's own codes for refusals
-the design named no code for; the vector tests map them. Not typed: corrupt
-stored state (TypeError, above), a gap over MAX_SKIP (Error), and a caller's key of
-the wrong length (TypeError).
+`invalid_header`, `invalid_bundle` and `skip_limit_exceeded` are the library's own
+codes for refusals the design named no code for; the vector tests map them. Every
+refusal a peer or the server can cause through a header, a sidecar, a bundle or a
+ciphertext is typed. Not typed, because only the host's own data or code can cause
+them: corrupt stored state (TypeError, above), a caller's key of the wrong length,
+and a plaintext over the encrypt limit (TypeError).
 
 ## 12. What the host must do
 
