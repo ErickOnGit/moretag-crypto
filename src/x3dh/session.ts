@@ -1,163 +1,106 @@
-import type { X3DHPrekeyBundleV1, X3DHSessionInitV1 } from "../wire/x3dh.js";
+/**
+ * Session bootstraps (protocol v2): X3DH followed by the Double Ratchet's
+ * initialization, with identity pinning in the order the design requires.
+ */
+
+import type { X3DHPrekeyBundleV2, X3DHSessionInitV2 } from "../wire/x3dh.js";
+import { decodeSessionInitV2 } from "../wire/x3dh.js";
 import {
-  decodeX25519PubB64,
-  x3dhInitiatorV1,
-  x3dhResponderV1,
+  checkSessionInitDevicesV2,
+  verifyPrekeyBundleV2,
+  x3dhInitiatorFromVerifiedBundle,
+  x3dhResponderFromDecoded,
 } from "../crypto/x3dh.js";
-import { generateX25519Keypair, x25519PublicFromPrivate } from "../crypto/x25519.js";
+import { assertCanonicalDeviceId } from "../crypto/device-id.js";
+import { bytesToBase64 } from "../encoding/base64.js";
 import type { IdentityRegistry } from "../identity/trust.js";
-import type { X3DHPrekeyManagerV1 } from "./prekey-manager.js";
-import { ratchetInit, type RatchetState } from "../ratchet/ratchet.js";
-import { timingSafeEqual } from "../crypto/validation.js";
+import type { X3DHPrekeyManagerV2 } from "./prekey-manager.js";
+import { DeviceMismatchError, SelfSessionError } from "../errors.js";
+import {
+  ratchetInitInitiatorV2,
+  ratchetInitResponderV2,
+  type RatchetState,
+} from "../ratchet/ratchet.js";
 
 /**
- * Initiator helper that pins the recipient's full (two-key) identity on first
- * use. If the pinned identity later changes, it throws {@link IdentityMismatchError};
- * accepting a new identity requires an explicit `trust.approveRotation(...)`.
+ * The initiator's bootstrap, in X3DH §3.3's order: verify the signed-prekey
+ * signature ({@link BadSignatureError}), check that the bundle names
+ * `expected_recipient_device_id` ({@link DeviceMismatchError}), then check and pin
+ * the recipient's two identity keys on `trust` ({@link IdentityMismatchError} on a
+ * changed identity), then run X3DH and RatchetInitAlice.
  *
- * Pass `initiator_ik_sig_pub32` to publish the initiator's Ed25519 identity in
- * the session_init so the responder can pin the initiator's full identity too.
+ * Draws: the EK private (32 bytes), then the first DHs private (32 bytes). The EK
+ * private key never leaves the library.
+ *
+ * Returns the ratchet state, ready to send, and the session_init sidecar the host
+ * sends beside every message until a peer message decrypts on this session.
  */
-export function x3dhInitiatorWithTrustV1(args: {
+export function x3dhInitiatorBootstrapV2(args: {
   sender_device_id: string;
-  recipient_bundle: X3DHPrekeyBundleV1;
+  recipient_bundle: X3DHPrekeyBundleV2;
+  expected_recipient_device_id: string;
   initiator_ik_priv32: Uint8Array;
-  initiator_ek_priv32?: Uint8Array;
-  initiator_ik_sig_pub32?: Uint8Array;
+  initiator_ik_sig_pub32: Uint8Array;
   trust: IdentityRegistry;
-}): { session_init: X3DHSessionInitV1; rk32: Uint8Array } {
-  const { trust, recipient_bundle, ...rest } = args;
-  trust.assertOrPin({
-    device_id: recipient_bundle.recipient_device_id,
-    ik_pub_b64: recipient_bundle.ik_pub_b64,
-    ik_sig_pub_b64: recipient_bundle.ik_sig_pub_b64,
+}): { session_init: X3DHSessionInitV2; ratchet_state: RatchetState } {
+  assertCanonicalDeviceId(args.sender_device_id);
+  assertCanonicalDeviceId(args.expected_recipient_device_id);
+  if (args.sender_device_id === args.expected_recipient_device_id) throw new SelfSessionError();
+
+  const bundle = verifyPrekeyBundleV2(args.recipient_bundle, args.expected_recipient_device_id);
+  args.trust.assertOrPin({
+    device_id: bundle.recipient_device_id,
+    ik_pub_b64: bytesToBase64(bundle.ik_pub32),
+    ik_sig_pub_b64: bytesToBase64(bundle.ik_sig_pub32),
   });
-  return x3dhInitiatorV1({ ...rest, recipient_bundle });
+
+  const { sk32, ad, session_init } = x3dhInitiatorFromVerifiedBundle({
+    sender_device_id: args.sender_device_id,
+    bundle,
+    initiator_ik_priv32: args.initiator_ik_priv32,
+    initiator_ik_sig_pub32: args.initiator_ik_sig_pub32,
+  });
+  const ratchet_state = ratchetInitInitiatorV2({ sk32, ad, remoteSpkPub32: bundle.spk_pub32 });
+  return { session_init, ratchet_state };
 }
 
 /**
- * Responder helper that looks up SPK/OPK from the prekey manager and consumes OPKs.
+ * The responder's bootstrap, in memory only. It reads the signed and one-time
+ * prekeys without consuming them, takes no trust registry (the host checks and
+ * pins only after the first message decrypts) and draws nothing.
+ *
+ * `sender_device_id` is the sending device from the server row, never the
+ * sidecar's claim; `recipient_device_id` is this device. A sidecar naming another
+ * sender or recipient is {@link DeviceMismatchError}; equal devices are
+ * {@link SelfSessionError}; a prekey this device does not hold is
+ * {@link UnknownPrekeyError} (`unknown_spk`, `unknown_opk`).
+ *
+ * Returns the responder state (RatchetInitBob) and the prekey ids the setup used,
+ * so the host can delete the one-time prekey once the first message decrypts.
  */
-export function x3dhResponderWithPrekeysV1(args: {
-  session_init: X3DHSessionInitV1;
-  prekeys: X3DHPrekeyManagerV1;
-  consumeOpk?: boolean;
-  trust?: IdentityRegistry;
-}): { rk32: Uint8Array } {
-  const { session_init, prekeys, trust } = args;
-  if (session_init.recipient_device_id !== prekeys.recipient_device_id) {
-    throw new Error("recipient_device_id mismatch");
-  }
-  if (trust) {
-    if (!session_init.sender_ik_sig_pub_b64) {
-      throw new Error(
-        "session_init.sender_ik_sig_pub_b64 is required to establish two-key identity trust"
-      );
-    }
-    trust.assertOrPin({
-      device_id: session_init.sender_device_id,
-      ik_pub_b64: session_init.sender_ik_pub_b64,
-      ik_sig_pub_b64: session_init.sender_ik_sig_pub_b64,
-    });
-  }
-
-  const recipient_ik_priv32 = prekeys.ik.priv32;
-  const recipient_spk_priv32 = prekeys.getSignedPrekeyPriv32(session_init.spk_id);
-  const recipient_opk_priv32 =
-    session_init.used_opk && session_init.opk_id !== undefined
-      ? (args.consumeOpk === false
-          ? prekeys.getOneTimePrekeyPriv32(session_init.opk_id)
-          : prekeys.consumeOneTimePrekey(session_init.opk_id).priv32)
-      : undefined;
-
-  const base = {
-    session_init,
-    recipient_ik_priv32,
-    recipient_spk_priv32,
-  };
-  return recipient_opk_priv32
-    ? x3dhResponderV1({ ...base, recipient_opk_priv32 })
-    : x3dhResponderV1(base);
-}
-
-/**
- * Initiator helper that runs X3DH and derives the initial ratchet state using
- * the same X3DH ephemeral key as the initial sending DH key.
- */
-export function x3dhInitiatorBootstrapV1(args: {
+export function x3dhResponderBootstrapV2(args: {
+  session_init: X3DHSessionInitV2;
+  prekeys: X3DHPrekeyManagerV2;
+  recipient_device_id: string;
   sender_device_id: string;
-  recipient_bundle: X3DHPrekeyBundleV1;
-  initiator_ik_priv32: Uint8Array;
-  initiator_ek_priv32?: Uint8Array;
-  initiator_ik_sig_pub32?: Uint8Array;
-  trust?: IdentityRegistry;
-}): {
-  session_init: X3DHSessionInitV1;
-  rk32: Uint8Array;
-  ratchet_state: RatchetState;
-  initiator_ek_priv32: Uint8Array;
-} {
-  const { trust, ...rest } = args;
-  if (trust) {
-    trust.assertOrPin({
-      device_id: rest.recipient_bundle.recipient_device_id,
-      ik_pub_b64: rest.recipient_bundle.ik_pub_b64,
-      ik_sig_pub_b64: rest.recipient_bundle.ik_sig_pub_b64,
-    });
-  }
+}): { ratchet_state: RatchetState; used: { spk_id: number; opk_id?: number } } {
+  const si = decodeSessionInitV2(args.session_init);
+  checkSessionInitDevicesV2(si, args.sender_device_id, args.recipient_device_id);
+  if (args.prekeys.recipient_device_id !== args.recipient_device_id) throw new DeviceMismatchError();
 
-  const initiatorEkPriv32 = rest.initiator_ek_priv32 ?? generateX25519Keypair().priv32;
-  const { session_init, rk32 } = x3dhInitiatorV1({
-    ...rest,
-    initiator_ek_priv32: initiatorEkPriv32,
+  const spk = args.prekeys.getSignedPrekey(si.spk_id);
+  const opkPriv32 = si.opk_id !== undefined ? args.prekeys.getOneTimePrekeyPriv32(si.opk_id) : undefined;
+
+  const { sk32, ad } = x3dhResponderFromDecoded({
+    session_init: si,
+    recipient_ik_priv32: args.prekeys.ik.priv32,
+    recipient_ik_sig_pub32: args.prekeys.ik_sig.pub32,
+    recipient_spk_priv32: spk.priv32,
+    recipient_opk_priv32: opkPriv32,
   });
-
-  const ekPub32 = x25519PublicFromPrivate(initiatorEkPriv32);
-  const sessionEkPub32 = decodeX25519PubB64(session_init.ek_pub_b64, "session_init.ek_pub_b64");
-  if (!timingSafeEqual(ekPub32, sessionEkPub32)) {
-    throw new Error("session_init.ek_pub_b64 does not match initiator_ek_priv32");
-  }
-
-  const remoteDhPub32 = decodeX25519PubB64(
-    rest.recipient_bundle.spk_pub_b64,
-    "recipient_bundle.spk_pub_b64"
-  );
-  const ratchet_state = ratchetInit({
-    rk32,
-    selfDh: { priv32: initiatorEkPriv32, pub32: ekPub32 },
-    remoteDhPub32,
-    sendingFirst: true,
-  });
-
+  const ratchet_state = ratchetInitResponderV2({ sk32, ad, selfSpk: spk });
   return {
-    session_init,
-    rk32,
     ratchet_state,
-    initiator_ek_priv32: new Uint8Array(initiatorEkPriv32),
+    used: { spk_id: si.spk_id, ...(si.opk_id !== undefined ? { opk_id: si.opk_id } : {}) },
   };
-}
-
-/**
- * Responder helper that runs X3DH using prekey material and derives the initial
- * ratchet receiving state (self DH = selected SPK, remote DH = initiator EK).
- */
-export function x3dhResponderBootstrapV1(args: {
-  session_init: X3DHSessionInitV1;
-  prekeys: X3DHPrekeyManagerV1;
-  consumeOpk?: boolean;
-  trust?: IdentityRegistry;
-}): { rk32: Uint8Array; ratchet_state: RatchetState } {
-  const { session_init, prekeys } = args;
-  const { rk32 } = x3dhResponderWithPrekeysV1(args);
-  const recipientSpkPriv32 = prekeys.getSignedPrekeyPriv32(session_init.spk_id);
-  const recipientSpkPub32 = x25519PublicFromPrivate(recipientSpkPriv32);
-  const remoteDhPub32 = decodeX25519PubB64(session_init.ek_pub_b64, "session_init.ek_pub_b64");
-
-  const ratchet_state = ratchetInit({
-    rk32,
-    selfDh: { priv32: recipientSpkPriv32, pub32: recipientSpkPub32 },
-    remoteDhPub32,
-    sendingFirst: false,
-  });
-  return { rk32, ratchet_state };
 }

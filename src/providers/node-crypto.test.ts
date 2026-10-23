@@ -30,10 +30,16 @@ import {
   aeadDecryptXChaCha20Poly1305,
 } from "../crypto/aead.js";
 import { hkdfSha256 } from "../crypto/hkdf.js";
-import { x3dhInitiatorV1, x3dhResponderV1, buildSpkSigMessage } from "../crypto/x3dh.js";
+import { x3dhInitiatorV2, x3dhResponderV2, buildSpkSigMessage } from "../crypto/x3dh.js";
 import { bytesToBase64 } from "../encoding/base64.js";
-import { ratchetInit, ratchetEncrypt, ratchetDecrypt } from "../ratchet/ratchet.js";
-import type { X3DHPrekeyBundleV1 } from "../wire/x3dh.js";
+import {
+  ratchetInitInitiatorV2,
+  ratchetInitResponderV2,
+  ratchetEncrypt,
+  ratchetDecrypt,
+} from "../ratchet/ratchet.js";
+import { X3DH_ALG_V2, type X3DHPrekeyBundleV2 } from "../wire/x3dh.js";
+import { ALICE_DEVICE, BOB_DEVICE } from "../test-fixtures.js";
 
 const noble = getPrimitives(); // module load runs before any registration
 const provider = createNodeCryptoPrimitives(nodeCrypto as unknown as NodeCryptoLike, {
@@ -179,87 +185,82 @@ describe("primitive-level interop (openssl vs noble)", () => {
 
 describe("protocol-level interop: messages encrypted natively decrypt on noble and vice versa", () => {
   function freshBundleAndKeys() {
-    // Build a minimal self-signed prekey bundle (fork-flat shape).
     const ik = generateX25519Keypair();
     const ikSig = generateEd25519Keypair();
     const spk = generateX25519Keypair();
+    const opk = generateX25519Keypair();
     const sigMsg = buildSpkSigMessage({
-      recipient_device_id: "device-b",
+      recipient_device_id: BOB_DEVICE,
       ik_pub32: ik.pub32,
       spk_pub32: spk.pub32,
       spk_id: 1,
     });
-    const bundle: X3DHPrekeyBundleV1 = {
-      v: 1,
-      alg: "x3dh-x25519-hkdf-sha256+ed25519",
-      recipient_device_id: "device-b",
+    const bundle: X3DHPrekeyBundleV2 = {
+      v: 2,
+      alg: X3DH_ALG_V2,
+      recipient_device_id: BOB_DEVICE,
       ik_pub_b64: bytesToBase64(ik.pub32),
       ik_sig_pub_b64: bytesToBase64(ikSig.pub32),
       spk_id: 1,
       spk_pub_b64: bytesToBase64(spk.pub32),
       spk_sig_b64: bytesToBase64(ed25519Sign(ikSig.priv32, sigMsg)),
+      opk_id: 9,
+      opk_pub_b64: bytesToBase64(opk.pub32),
     };
-    return { ik, spk, bundle };
+    return { ik, ikSig, spk, opk, bundle };
   }
 
   function runConversation(encryptOn: "node" | "noble", decryptOn: "node" | "noble") {
     const use = (which: "node" | "noble") =>
       which === "node" ? registerNode() : resetCryptoPrimitives();
 
-    // X3DH on the encrypting side
+    // X3DH and the first sends on the encrypting side
     use(encryptOn);
-    const { ik, spk, bundle } = freshBundleAndKeys();
+    const { ik, ikSig, spk, opk, bundle } = freshBundleAndKeys();
     const initiatorIk = generateX25519Keypair();
-    const { session_init, rk32: rkA } = x3dhInitiatorV1({
-      sender_device_id: "device-a",
+    const initiatorIkSig = generateEd25519Keypair();
+    const a = x3dhInitiatorV2({
+      sender_device_id: ALICE_DEVICE,
       recipient_bundle: bundle,
+      expected_recipient_device_id: BOB_DEVICE,
       initiator_ik_priv32: initiatorIk.priv32,
+      initiator_ik_sig_pub32: initiatorIkSig.pub32,
     });
-
-    let alice = ratchetInit({
-      rk32: rkA,
-      remoteDhPub32: spk.pub32,
-      sendingFirst: true,
-    });
-    const aliceInitialDhPub32 = alice.dh_self.pub32;
+    let alice = ratchetInitInitiatorV2({ sk32: a.sk32, ad: a.ad, remoteSpkPub32: spk.pub32 });
 
     const sent: { header: any; ciphertext_b64: string; plaintext: Uint8Array }[] = [];
     for (let i = 0; i < 10; i++) {
       const plaintext = new TextEncoder().encode(`msg ${i} ` + "x".repeat(i * 20));
-      const res = ratchetEncrypt({
-        state: alice,
-        plaintext,
-        sender_device_id: "device-a",
-        recipient_device_id: "device-b",
-      });
+      const res = ratchetEncrypt({ state: alice, plaintext });
       alice = res.state;
       sent.push({ header: res.header, ciphertext_b64: res.ciphertext_b64, plaintext });
     }
 
-    // X3DH + decryption on the other implementation
+    // X3DH and decryption on the other implementation
     use(decryptOn);
-    const { rk32: rkB } = x3dhResponderV1({
-      session_init,
+    const b = x3dhResponderV2({
+      session_init: a.session_init,
+      sender_device_id: ALICE_DEVICE,
+      recipient_device_id: BOB_DEVICE,
       recipient_ik_priv32: ik.priv32,
+      recipient_ik_sig_pub32: ikSig.pub32,
       recipient_spk_priv32: spk.priv32,
+      recipient_opk_priv32: opk.priv32,
     });
-    expect(rkB).toEqual(rkA); // root keys agree across implementations
+    expect(b.sk32).toEqual(a.sk32); // SK and AD agree across implementations
+    expect(b.ad).toEqual(a.ad);
 
-    let bob = ratchetInit({
-      rk32: rkB,
-      selfDh: spk,
-      remoteDhPub32: aliceInitialDhPub32,
-      sendingFirst: false,
-    });
+    let bob = ratchetInitResponderV2({ sk32: b.sk32, ad: b.ad, selfSpk: spk });
     for (const m of sent) {
-      const res = ratchetDecrypt({
-        state: bob,
-        header: m.header,
-        ciphertext_b64: m.ciphertext_b64,
-      });
+      const res = ratchetDecrypt({ state: bob, header: m.header, ciphertext_b64: m.ciphertext_b64 });
       bob = res.state;
       expect(res.plaintext).toEqual(m.plaintext);
     }
+    const reply = ratchetEncrypt({ state: bob, plaintext: new TextEncoder().encode("reply") });
+    use(encryptOn);
+    expect(ratchetDecrypt({ state: alice, header: reply.header, ciphertext_b64: reply.ciphertext_b64 }).plaintext).toEqual(
+      new TextEncoder().encode("reply")
+    );
   }
 
   it("encrypt on node:crypto → decrypt on noble", () => {

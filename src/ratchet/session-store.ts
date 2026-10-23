@@ -1,4 +1,4 @@
-import { ratchetEncrypt, ratchetDecrypt, type RatchetState } from "./ratchet.js";
+import { cloneRatchetState, ratchetEncrypt, ratchetDecrypt, type RatchetState } from "./ratchet.js";
 import { SessionNotFoundError } from "../errors.js";
 
 export interface PersistedSession {
@@ -29,26 +29,6 @@ export interface RatchetSessionStore {
 /** Ratchet arguments for the with-store helpers: the store's record is the only state. */
 type EncryptWithStoreArgs = Omit<Parameters<typeof ratchetEncrypt>[0], "state">;
 type DecryptWithStoreArgs = Omit<Parameters<typeof ratchetDecrypt>[0], "state">;
-
-export function cloneRatchetState(state: RatchetState): RatchetState {
-  return {
-    version: state.version,
-    rk32: new Uint8Array(state.rk32),
-    ck_s32: state.ck_s32 ? new Uint8Array(state.ck_s32) : undefined,
-    ck_r32: state.ck_r32 ? new Uint8Array(state.ck_r32) : undefined,
-    ns: state.ns,
-    nr: state.nr,
-    pn: state.pn,
-    dh_self: {
-      priv32: new Uint8Array(state.dh_self.priv32),
-      pub32: new Uint8Array(state.dh_self.pub32),
-    },
-    dh_remote_pub32: new Uint8Array(state.dh_remote_pub32),
-    skipped: new Map(
-      Array.from(state.skipped.entries()).map(([k, v]) => [k, new Uint8Array(v)])
-    ),
-  };
-}
 
 export function createPersistedSession(state: RatchetState): PersistedSession {
   return { version: 0, state: cloneRatchetState(state) };
@@ -109,13 +89,13 @@ export async function ratchetDecryptWithStore(
   store: RatchetSessionStore,
   sessionId: string,
   args: DecryptWithStoreArgs
-): Promise<{ plaintext: Uint8Array }> {
+): Promise<{ plaintext: Uint8Array; grp: ReturnType<typeof ratchetDecrypt>["grp"] }> {
   if (store.transact) {
-    let out: { plaintext: Uint8Array } | undefined;
+    let out: { plaintext: Uint8Array; grp: ReturnType<typeof ratchetDecrypt>["grp"] } | undefined;
     await store.transact(sessionId, (current) => {
       const state = cloneRatchetState(current.state);
-      const { plaintext } = ratchetDecrypt({ ...args, state });
-      out = { plaintext };
+      const { plaintext, grp } = ratchetDecrypt({ ...args, state });
+      out = { plaintext, grp };
       return { version: current.version + 1, state };
     });
     if (!out) throw new Error("Unexpected: missing decrypt output");
@@ -125,7 +105,7 @@ export async function ratchetDecryptWithStore(
   const record = await store.load(sessionId);
   if (!record) throw new SessionNotFoundError();
   const state = cloneRatchetState(record.state);
-  const { plaintext } = ratchetDecrypt({ ...args, state });
+  const { plaintext, grp } = ratchetDecrypt({ ...args, state });
   await store.save(sessionId, { version: record.version + 1, state });
-  return { plaintext };
+  return { plaintext, grp };
 }

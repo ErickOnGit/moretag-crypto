@@ -1,300 +1,310 @@
 import { describe, it, expect } from "vitest";
-import { ratchetInit, ratchetEncrypt, ratchetDecrypt, type RatchetState } from "./ratchet.js";
-import { serializeRatchetStateV1 } from "./serialization.js";
-import { DecryptFailedError, ReplayDetectedError } from "../errors.js";
-import { generateX25519Keypair } from "../crypto/x25519.js";
+import {
+  ratchetInitInitiatorV2,
+  ratchetInitResponderV2,
+  ratchetEncrypt,
+  ratchetDecrypt,
+  type RatchetState,
+} from "./ratchet.js";
+import { serializeRatchetStateV2 } from "./serialization.js";
+import {
+  DecryptFailedError,
+  DeviceMismatchError,
+  InvalidWireError,
+  NoSendingChainError,
+  ReplayDetectedError,
+} from "../errors.js";
+import { generateEd25519Keypair } from "../crypto/ed25519.js";
+import { generateX25519Keypair, x25519SharedSecret } from "../crypto/x25519.js";
+import { kdfRootAndChainKey } from "../crypto/kdf.js";
+import { buildAssociatedDataV2 } from "../crypto/ad.js";
 import { randomBytes } from "@noble/ciphers/utils.js";
 import { MAX_PLAINTEXT_BYTES, MAX_SKIP_DERIVE, MAX_SKIPPED_KEYS } from "../crypto/limits.js";
-import { bytesToBase64 } from "../encoding/base64.js";
+import { x3dhResponderBootstrapV2 } from "../x3dh/session.js";
+import {
+  ALICE_DEVICE,
+  BOB_DEVICE,
+  CAROL_DEVICE,
+  establishedPair,
+  sessionPair,
+  utf8,
+} from "../test-fixtures.js";
+import type { HeaderProtoV2 } from "../wire/header.js";
 
-function encode(str: string): Uint8Array {
-  return new TextEncoder().encode(str);
+const text = (b: Uint8Array) => new TextDecoder().decode(b);
+const snapshot = (state: RatchetState) => JSON.stringify(serializeRatchetStateV2(state));
+
+function send(state: RatchetState, message: string, grp?: { gid: string; epoch: number }) {
+  const { header, ciphertext_b64 } = ratchetEncrypt({
+    state,
+    plaintext: utf8(message),
+    ...(grp ? { grp } : {}),
+  });
+  return { header, ciphertext_b64 };
 }
 
+function thrownBy(fn: () => unknown): unknown {
+  try {
+    fn();
+  } catch (err) {
+    return err;
+  }
+  throw new Error("expected a throw");
+}
+
+function randomAd(devA = ALICE_DEVICE, devB = BOB_DEVICE): Uint8Array {
+  return buildAssociatedDataV2({
+    initiator_ik_pub32: generateX25519Keypair().pub32,
+    responder_ik_pub32: generateX25519Keypair().pub32,
+    initiator_ik_sig_pub32: generateEd25519Keypair().pub32,
+    responder_ik_sig_pub32: generateEd25519Keypair().pub32,
+    initiator_device_id: devA,
+    responder_device_id: devB,
+  });
+}
+
+describe("initialization (DR §3.3)", () => {
+  it("the initiator draws DHs, sets DHr to the signed prekey and derives RK and CKs from SK", () => {
+    const sk32 = randomBytes(32);
+    const ad = randomAd();
+    const spk = generateX25519Keypair();
+    const alice = ratchetInitInitiatorV2({ sk32, ad, remoteSpkPub32: spk.pub32 });
+
+    const expected = kdfRootAndChainKey(sk32, x25519SharedSecret(alice.dh_self.priv32, spk.pub32));
+    expect(alice.role).toBe("initiator");
+    expect(alice.rk32).toEqual(expected.rk32);
+    expect(alice.ck_s32).toEqual(expected.ck32);
+    expect(alice.ck_r32).toBeUndefined();
+    expect(alice.dh_remote_pub32).toEqual(spk.pub32);
+    expect([alice.ns, alice.nr, alice.pn]).toEqual([0, 0, 0]);
+    expect(alice.ad).toEqual(ad);
+  });
+
+  it("the responder keeps the signed prekey pair as DHs, RK = SK, no DHr and no chains", () => {
+    const sk32 = randomBytes(32);
+    const ad = randomAd();
+    const spk = generateX25519Keypair();
+    const bob = ratchetInitResponderV2({ sk32, ad, selfSpk: spk });
+
+    expect(bob.role).toBe("responder");
+    expect(bob.rk32).toEqual(sk32);
+    expect(bob.dh_self).toEqual(spk);
+    expect(bob.dh_remote_pub32).toBeUndefined();
+    expect(bob.ck_s32).toBeUndefined();
+    expect(bob.ck_r32).toBeUndefined();
+  });
+
+  it("every input is copied", () => {
+    const sk32 = randomBytes(32);
+    const ad = randomAd();
+    const spk = generateX25519Keypair();
+    const bob = ratchetInitResponderV2({ sk32, ad, selfSpk: spk });
+    const alice = ratchetInitInitiatorV2({ sk32, ad, remoteSpkPub32: spk.pub32 });
+    for (const input of [sk32, ad, spk.priv32, spk.pub32]) input.fill(0);
+    expect(bob.rk32.some((b) => b !== 0)).toBe(true);
+    expect(bob.ad.some((b) => b !== 0)).toBe(true);
+    expect(bob.dh_self.priv32.some((b) => b !== 0)).toBe(true);
+    expect(alice.ad.some((b) => b !== 0)).toBe(true);
+    expect(alice.dh_remote_pub32!.some((b) => b !== 0)).toBe(true);
+  });
+
+  it("refuses a malformed associated data", () => {
+    const spk = generateX25519Keypair();
+    expect(() =>
+      ratchetInitInitiatorV2({ sk32: randomBytes(32), ad: new Uint8Array(164), remoteSpkPub32: spk.pub32 })
+    ).toThrow(TypeError);
+  });
+});
+
 describe("Double Ratchet", () => {
-  it("performs basic send/receive roundtrip", () => {
-    const root = randomBytes(32);
-    const aliceDh = generateX25519Keypair();
-    const bobDh = generateX25519Keypair();
+  it("round-trips in both directions, with a DH step each way, under one AD", () => {
+    const { alice, bob } = sessionPair();
+    expect(alice.ad).toEqual(bob.ad);
 
-    const aliceState = ratchetInit({
-      rk32: root,
-      selfDh: aliceDh,
-      remoteDhPub32: bobDh.pub32,
-      sendingFirst: true,
-    });
-    const bobState = ratchetInit({
-      rk32: root,
-      selfDh: bobDh,
-      remoteDhPub32: aliceDh.pub32,
-      sendingFirst: false,
-    });
+    const m0 = send(alice, "hello bob");
+    expect(text(ratchetDecrypt({ state: bob, ...m0 }).plaintext)).toBe("hello bob");
+    const r0 = send(bob, "hello alice");
+    expect(r0.header.sender_device_id).toBe(BOB_DEVICE);
+    expect(r0.header.recipient_device_id).toBe(ALICE_DEVICE);
+    expect(text(ratchetDecrypt({ state: alice, ...r0 }).plaintext)).toBe("hello alice");
+    const m1 = send(alice, "again");
+    expect(m1.header.dr.dh_pub_b64).not.toBe(m0.header.dr.dh_pub_b64);
+    expect(text(ratchetDecrypt({ state: bob, ...m1 }).plaintext)).toBe("again");
+    expect(alice.ad).toEqual(bob.ad);
+  });
 
-    const plaintext = encode("hello bob");
-
-    const { header, ciphertext_b64 } = ratchetEncrypt({
-      state: aliceState,
-      plaintext,
-      sender_device_id: "alice-device",
-      recipient_device_id: "bob-device",
-    });
-
-    const { plaintext: decrypted } = ratchetDecrypt({
-      state: bobState,
-      header,
-      ciphertext_b64,
-    });
-
-    expect(decrypted).toEqual(plaintext);
+  it("writes the header ids from AD by role", () => {
+    const { alice } = sessionPair();
+    const m0 = send(alice, "x");
+    expect(m0.header.sender_device_id).toBe(ALICE_DEVICE);
+    expect(m0.header.recipient_device_id).toBe(BOB_DEVICE);
+    expect(m0.header.v).toBe(2);
+    expect(m0.header).not.toHaveProperty("grp");
   });
 
   it("handles out-of-order receive using skipped message keys", () => {
-    const root = randomBytes(32);
-    const aliceDh = generateX25519Keypair();
-    const bobDh = generateX25519Keypair();
-
-    const aliceState = ratchetInit({
-      rk32: root,
-      selfDh: aliceDh,
-      remoteDhPub32: bobDh.pub32,
-      sendingFirst: true,
-    });
-    const bobState = ratchetInit({
-      rk32: root,
-      selfDh: bobDh,
-      remoteDhPub32: aliceDh.pub32,
-      sendingFirst: false,
-    });
-
-    const msg1 = encode("m1");
-    const msg2 = encode("m2");
-
-    const enc1 = ratchetEncrypt({
-      state: aliceState,
-      plaintext: msg1,
-      sender_device_id: "alice-device",
-      recipient_device_id: "bob-device",
-    });
-    const enc2 = ratchetEncrypt({
-      state: aliceState,
-      plaintext: msg2,
-      sender_device_id: "alice-device",
-      recipient_device_id: "bob-device",
-    });
-
-    // Bob receives second message first
-    const dec2 = ratchetDecrypt({
-      state: bobState,
-      header: enc2.header,
-      ciphertext_b64: enc2.ciphertext_b64,
-    });
-    expect(dec2.plaintext).toEqual(msg2);
-
-    // Then first message from skipped cache
-    const dec1 = ratchetDecrypt({
-      state: bobState,
-      header: enc1.header,
-      ciphertext_b64: enc1.ciphertext_b64,
-    });
-    expect(dec1.plaintext).toEqual(msg1);
+    const { alice, bob } = sessionPair();
+    const m1 = send(alice, "m1");
+    const m2 = send(alice, "m2");
+    expect(text(ratchetDecrypt({ state: bob, ...m2 }).plaintext)).toBe("m2");
+    expect(text(ratchetDecrypt({ state: bob, ...m1 }).plaintext)).toBe("m1");
   });
 
-  it("advances DH ratchet on sender request and decrypts after receiver ratchet", () => {
-    const root = randomBytes(32);
-    const aliceDh = generateX25519Keypair();
-    const bobDh = generateX25519Keypair();
+  it("a state whose AD differs cannot read the message", () => {
+    const { alice, bob } = sessionPair();
+    const m0 = send(alice, "x");
+    const other = { ...bob, ad: randomAd() };
+    expect(thrownBy(() => ratchetDecrypt({ state: other, ...m0 }))).toBeInstanceOf(DecryptFailedError);
+  });
 
-    const aliceState = ratchetInit({
-      rk32: root,
-      selfDh: aliceDh,
-      remoteDhPub32: bobDh.pub32,
-      sendingFirst: true,
-    });
-    const bobState = ratchetInit({
-      rk32: root,
-      selfDh: bobDh,
-      remoteDhPub32: aliceDh.pub32,
-      sendingFirst: false,
-    });
+  it("a header id differing from AD is device_mismatch before the AEAD, state unchanged", () => {
+    const { alice, bob } = sessionPair();
+    const m0 = send(alice, "x");
+    const before = snapshot(bob);
+    for (const header of [
+      { ...m0.header, sender_device_id: CAROL_DEVICE },
+      { ...m0.header, recipient_device_id: CAROL_DEVICE },
+      { ...m0.header, sender_device_id: BOB_DEVICE },
+    ]) {
+      const err = thrownBy(() => ratchetDecrypt({ state: bob, header, ciphertext_b64: m0.ciphertext_b64 }));
+      expect(err).toBeInstanceOf(DeviceMismatchError);
+      expect((err as DeviceMismatchError).code).toBe("device_mismatch");
+    }
+    expect(snapshot(bob)).toBe(before);
+    expect(text(ratchetDecrypt({ state: bob, ...m0 }).plaintext)).toBe("x");
+  });
 
-    // First message without DH advance
-    const first = ratchetEncrypt({
-      state: aliceState,
-      plaintext: encode("first"),
-      sender_device_id: "alice-device",
-      recipient_device_id: "bob-device",
-    });
-    ratchetDecrypt({ state: bobState, header: first.header, ciphertext_b64: first.ciphertext_b64 });
+  it("encrypt without a sending chain throws no_sending_chain and changes nothing", () => {
+    const { bob } = sessionPair();
+    const before = snapshot(bob);
+    const err = thrownBy(() => ratchetEncrypt({ state: bob, plaintext: utf8("x") }));
+    expect(err).toBeInstanceOf(NoSendingChainError);
+    expect((err as NoSendingChainError).code).toBe("no_sending_chain");
+    expect(snapshot(bob)).toBe(before);
+  });
 
-    // Second message with new DH key (advanceDh=true)
-    const second = ratchetEncrypt({
-      state: aliceState,
-      plaintext: encode("second"),
-      sender_device_id: "alice-device",
-      recipient_device_id: "bob-device",
-      advanceDh: true,
-    });
+  it("the group slot round-trips authenticated, and pairwise messages return null", () => {
+    const { alice, bob } = sessionPair();
+    const grp = { gid: CAROL_DEVICE, epoch: 2 ** 40 };
+    const m0 = send(alice, "group", grp);
+    expect(m0.header.grp).toEqual(grp);
+    expect(ratchetDecrypt({ state: bob, ...m0 }).grp).toEqual(grp);
+    const m1 = send(alice, "pairwise");
+    expect(ratchetDecrypt({ state: bob, ...m1 }).grp).toBeNull();
+  });
 
-    const decSecond = ratchetDecrypt({
-      state: bobState,
-      header: second.header,
-      ciphertext_b64: second.ciphertext_b64,
-    });
+  it("a changed or stripped group slot fails authentication", () => {
+    const { alice, bob } = sessionPair();
+    const m0 = send(alice, "group", { gid: CAROL_DEVICE, epoch: 3 });
+    const before = snapshot(bob);
+    const changed = { ...m0.header, grp: { gid: CAROL_DEVICE, epoch: 4 } };
+    const { grp: _dropped, ...stripped } = m0.header;
+    for (const header of [changed, stripped as HeaderProtoV2]) {
+      expect(thrownBy(() => ratchetDecrypt({ state: bob, header, ciphertext_b64: m0.ciphertext_b64 }))).toBeInstanceOf(
+        DecryptFailedError
+      );
+    }
+    expect(snapshot(bob)).toBe(before);
+  });
 
-    expect(decSecond.plaintext).toEqual(encode("second"));
+  it("a malformed group slot is refused on both sides", () => {
+    const { alice, bob } = sessionPair();
+    const m0 = send(alice, "x");
+    const bad = [
+      { gid: CAROL_DEVICE.toUpperCase(), epoch: 1 },
+      { gid: CAROL_DEVICE, epoch: -1 },
+      { gid: CAROL_DEVICE, epoch: 1.5 },
+      { gid: CAROL_DEVICE },
+      "group",
+    ];
+    for (const grp of bad) {
+      const header = { ...m0.header, grp } as unknown as HeaderProtoV2;
+      const err = thrownBy(() => ratchetDecrypt({ state: bob, header, ciphertext_b64: m0.ciphertext_b64 }));
+      expect((err as InvalidWireError).code).toBe("invalid_grp");
+      const encErr = thrownBy(() =>
+        ratchetEncrypt({ state: alice, plaintext: utf8("x"), grp: grp as never })
+      );
+      expect((encErr as InvalidWireError).code).toBe("invalid_grp");
+    }
+  });
+
+  it("X3DH §4.3: two responder bootstraps from one setup reply with different keys", () => {
+    const { alice, bobKeys, session_init } = sessionPair();
+    const m0 = send(alice, "x");
+    const replies = [0, 1].map(() => {
+      const { ratchet_state } = x3dhResponderBootstrapV2({
+        session_init,
+        prekeys: bobKeys,
+        recipient_device_id: BOB_DEVICE,
+        sender_device_id: ALICE_DEVICE,
+      });
+      ratchetDecrypt({ state: ratchet_state, ...m0 });
+      return send(ratchet_state, "same reply");
+    });
+    expect(replies[0]!.header.dr.dh_pub_b64).not.toBe(replies[1]!.header.dr.dh_pub_b64);
+    expect(replies[0]!.ciphertext_b64).not.toBe(replies[1]!.ciphertext_b64);
   });
 
   it("rejects plaintext exceeding limit", () => {
-    const root = randomBytes(32);
-    const aliceDh = generateX25519Keypair();
-    const bobDh = generateX25519Keypair();
-
-    const aliceState = ratchetInit({
-      rk32: root,
-      selfDh: aliceDh,
-      remoteDhPub32: bobDh.pub32,
-      sendingFirst: true,
-    });
-
-    const oversized = new Uint8Array(MAX_PLAINTEXT_BYTES + 1);
+    const { alice } = sessionPair();
+    const before = snapshot(alice);
     expect(() =>
-      ratchetEncrypt({
-        state: aliceState,
-        plaintext: oversized,
-        sender_device_id: "alice-device",
-        recipient_device_id: "bob-device",
-      })
+      ratchetEncrypt({ state: alice, plaintext: new Uint8Array(MAX_PLAINTEXT_BYTES + 1) })
     ).toThrow(/Plaintext too large/);
+    expect(snapshot(alice)).toBe(before);
   });
 
   it("enforces receive derivation window limit", () => {
-    const root = randomBytes(32);
-    const aliceDh = generateX25519Keypair();
-    const bobDh = generateX25519Keypair();
-
-    const aliceState = ratchetInit({
-      rk32: root,
-      selfDh: aliceDh,
-      remoteDhPub32: bobDh.pub32,
-      sendingFirst: true,
-    });
-    const bobState = ratchetInit({
-      rk32: root,
-      selfDh: bobDh,
-      remoteDhPub32: aliceDh.pub32,
-      sendingFirst: false,
-    });
-
-    const header = {
-      v: 1,
-      alg: "xchacha20poly1305",
-      nonce_b64: bytesToBase64(randomBytes(24)),
-      sender_device_id: "alice-device",
-      recipient_device_id: "bob-device",
-      dr: {
-        dh_pub_b64: bytesToBase64(aliceDh.pub32),
-        pn: 0,
-        n: MAX_SKIP_DERIVE + 5,
-      },
-    } as const;
-
-    const ciphertext_b64 = bytesToBase64(new Uint8Array(32)); // dummy
-
-    expect(() =>
-      ratchetDecrypt({ state: bobState, header, ciphertext_b64 })
-    ).toThrow(/Max skip derivation window exceeded/);
-
-    // Ensure sender state unaffected for subsequent valid sends
-    const enc = ratchetEncrypt({
-      state: aliceState,
-      plaintext: encode("ok"),
-      sender_device_id: "alice-device",
-      recipient_device_id: "bob-device",
-    });
-    const dec = ratchetDecrypt({
-      state: bobState,
-      header: enc.header,
-      ciphertext_b64: enc.ciphertext_b64,
-    });
-    expect(dec.plaintext).toEqual(encode("ok"));
+    const { alice, bob } = establishedPair();
+    const m = send(alice, "ok");
+    const header: HeaderProtoV2 = { ...m.header, dr: { ...m.header.dr, n: m.header.dr.n + MAX_SKIP_DERIVE + 5 } };
+    expect(() => ratchetDecrypt({ state: bob, header, ciphertext_b64: m.ciphertext_b64 })).toThrow(
+      /Max skip derivation window exceeded/
+    );
+    expect(text(ratchetDecrypt({ state: bob, ...m }).plaintext)).toBe("ok");
   });
 
   it("rejects non-integer or negative counters in headers", () => {
-    const root = randomBytes(32);
-    const aliceDh = generateX25519Keypair();
-    const bobDh = generateX25519Keypair();
+    const { alice, bob } = sessionPair();
+    const m = send(alice, "x");
+    for (const dr of [
+      { ...m.header.dr, pn: -1 },
+      { ...m.header.dr, n: 1.5 },
+      { ...m.header.dr, n: 2 ** 53 },
+    ]) {
+      const err = thrownBy(() =>
+        ratchetDecrypt({ state: bob, header: { ...m.header, dr }, ciphertext_b64: m.ciphertext_b64 })
+      );
+      expect(err).toBeInstanceOf(InvalidWireError);
+      expect((err as InvalidWireError).code).toBe("invalid_header");
+    }
+  });
 
-    const bobState = ratchetInit({
-      rk32: root,
-      selfDh: bobDh,
-      remoteDhPub32: aliceDh.pub32,
-      sendingFirst: false,
-    });
+  it("rejects a v1 header", () => {
+    const { alice, bob } = sessionPair();
+    const m = send(alice, "x");
+    const header = { ...m.header, v: 1 } as unknown as HeaderProtoV2;
+    expect((thrownBy(() => ratchetDecrypt({ state: bob, header, ciphertext_b64: m.ciphertext_b64 })) as InvalidWireError).code).toBe(
+      "invalid_header"
+    );
+  });
 
-    const baseHeader = {
-      v: 1,
-      alg: "xchacha20poly1305",
-      nonce_b64: bytesToBase64(randomBytes(24)),
-      sender_device_id: "alice-device",
-      recipient_device_id: "bob-device",
-      dr: {
-        dh_pub_b64: bytesToBase64(aliceDh.pub32),
-        pn: 0,
-        n: 0,
-      },
-    } as const;
+  it("extra header keys, such as a sidecar, do not change the AAD", () => {
+    const { alice, bob, session_init } = sessionPair();
+    const m = send(alice, "x");
+    const header = { ...m.header, session_init } as HeaderProtoV2;
+    expect(text(ratchetDecrypt({ state: bob, header, ciphertext_b64: m.ciphertext_b64 }).plaintext)).toBe("x");
+  });
 
-    const ciphertext_b64 = bytesToBase64(new Uint8Array(32));
-
-    expect(() =>
-      ratchetDecrypt({
-        state: bobState,
-        header: { ...baseHeader, dr: { ...baseHeader.dr, pn: -1 } },
-        ciphertext_b64,
-      })
-    ).toThrow(/non-negative integer/);
-
-    expect(() =>
-      ratchetDecrypt({
-        state: bobState,
-        header: { ...baseHeader, dr: { ...baseHeader.dr, n: 1.5 } },
-        ciphertext_b64,
-      })
-    ).toThrow(/non-negative integer/);
+  it("a nonce is random per message", () => {
+    const { alice } = sessionPair();
+    expect(send(alice, "a").header.nonce_b64).not.toBe(send(alice, "a").header.nonce_b64);
   });
 });
 
 describe("replay detection", () => {
-  function pair(): { alice: RatchetState; bob: RatchetState } {
-    const root = randomBytes(32);
-    const aliceDh = generateX25519Keypair();
-    const bobDh = generateX25519Keypair();
-    return {
-      alice: ratchetInit({ rk32: root, selfDh: aliceDh, remoteDhPub32: bobDh.pub32, sendingFirst: true }),
-      bob: ratchetInit({ rk32: root, selfDh: bobDh, remoteDhPub32: aliceDh.pub32, sendingFirst: false }),
-    };
-  }
-  function send(state: RatchetState, text: string, from = "alice-device", to = "bob-device") {
-    const { header, ciphertext_b64 } = ratchetEncrypt({
-      state,
-      plaintext: encode(text),
-      sender_device_id: from,
-      recipient_device_id: to,
-    });
-    return { header, ciphertext_b64 };
-  }
-  const snapshot = (state: RatchetState) => JSON.stringify(serializeRatchetStateV1(state));
-  function thrownBy(fn: () => unknown): unknown {
-    try {
-      fn();
-    } catch (err) {
-      return err;
-    }
-    throw new Error("expected a throw");
-  }
-
   it("an in-order replay throws ReplayDetectedError and leaves the state identical", () => {
-    const { alice, bob } = pair();
+    const { alice, bob } = sessionPair();
     const m0 = send(alice, "m0");
     ratchetDecrypt({ state: bob, ...m0 });
     const before = snapshot(bob);
@@ -304,7 +314,7 @@ describe("replay detection", () => {
   });
 
   it("a replay of a consumed skipped message throws ReplayDetectedError and leaves the state identical", () => {
-    const { alice, bob } = pair();
+    const { alice, bob } = sessionPair();
     const m0 = send(alice, "m0");
     const m1 = send(alice, "m1");
     ratchetDecrypt({ state: bob, ...m1 });
@@ -317,36 +327,30 @@ describe("replay detection", () => {
 
   it("at MAX_SKIPPED_KEYS the oldest skipped key is evicted, not the message refused", () => {
     expect(MAX_SKIPPED_KEYS).toBe(2 * MAX_SKIP_DERIVE); // the fill below relies on it
-    const { alice, bob } = pair();
+    const { alice, bob } = establishedPair();
     const sent = Array.from({ length: 3 * MAX_SKIP_DERIVE + 3 }, (_, n) => send(alice, `m${n}`));
 
-    // Two gaps of MAX_SKIP_DERIVE fill the cache: n = 0..999 and 1001..2000.
+    // Two gaps of MAX_SKIP_DERIVE fill the cache.
     ratchetDecrypt({ state: bob, ...sent[MAX_SKIP_DERIVE]! });
     ratchetDecrypt({ state: bob, ...sent[2 * MAX_SKIP_DERIVE + 1]! });
     expect(bob.skipped.size).toBe(MAX_SKIPPED_KEYS);
 
     // A further gap succeeds, evicting the oldest 1,000.
     const last = sent[3 * MAX_SKIP_DERIVE + 2]!;
-    expect(new TextDecoder().decode(ratchetDecrypt({ state: bob, ...last }).plaintext)).toBe(
-      `m${3 * MAX_SKIP_DERIVE + 2}`
-    );
+    expect(text(ratchetDecrypt({ state: bob, ...last }).plaintext)).toBe(`m${3 * MAX_SKIP_DERIVE + 2}`);
     expect(bob.skipped.size).toBe(MAX_SKIPPED_KEYS);
 
     // The newest skipped message still decrypts; the oldest, evicted, is a replay.
     const newest = sent[3 * MAX_SKIP_DERIVE + 1]!;
-    expect(new TextDecoder().decode(ratchetDecrypt({ state: bob, ...newest }).plaintext)).toBe(
-      `m${3 * MAX_SKIP_DERIVE + 1}`
-    );
-    expect(thrownBy(() => ratchetDecrypt({ state: bob, ...sent[0]! }))).toBeInstanceOf(
-      ReplayDetectedError
-    );
+    expect(text(ratchetDecrypt({ state: bob, ...newest }).plaintext)).toBe(`m${3 * MAX_SKIP_DERIVE + 1}`);
+    expect(thrownBy(() => ratchetDecrypt({ state: bob, ...sent[0]! }))).toBeInstanceOf(ReplayDetectedError);
   });
 
   it("a replay from an earlier receiving chain is not ReplayDetectedError", () => {
-    const { alice, bob } = pair();
+    const { alice, bob } = sessionPair();
     const m0 = send(alice, "m0");
     ratchetDecrypt({ state: bob, ...m0 });
-    const reply = send(bob, "reply", "bob-device", "alice-device");
+    const reply = send(bob, "reply");
     ratchetDecrypt({ state: alice, ...reply });
     const m1 = send(alice, "m1"); // new sending chain: Bob's receiving chain moves on
     ratchetDecrypt({ state: bob, ...m1 });

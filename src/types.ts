@@ -11,5 +11,5 @@ export type UUID = string & { readonly __brand: "UUID" };
 export type Base64String = string & { readonly __brand: "Base64String" };
 
 // Re-export wire format types for convenience
-export type { HeaderProtoV1, ArchiveHeaderV1 } from "./wire/header.js";
+export type { HeaderProtoV2 } from "./wire/header.js";
 export type { MessagePayloadV1 } from "./wire/payload.js";

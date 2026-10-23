@@ -1,10 +1,15 @@
 import { describe, it, expect } from "vitest";
-import { ratchetInit, ratchetEncrypt, ratchetDecrypt } from "./ratchet.js";
-import { generateX25519Keypair } from "../crypto/x25519.js";
-import { randomBytes } from "@noble/ciphers/utils.js";
+import { ratchetEncrypt, ratchetDecrypt, type RatchetState } from "./ratchet.js";
+import { establishedPair } from "../test-fixtures.js";
 
 function encode(str: string): Uint8Array {
   return new TextEncoder().encode(str);
+}
+
+/** Bob replies and Alice reads it, so Alice's next message starts a new DH chain. */
+function turnAround(alice: RatchetState, bob: RatchetState): void {
+  const reply = ratchetEncrypt({ state: bob, plaintext: encode("reply") });
+  ratchetDecrypt({ state: alice, header: reply.header, ciphertext_b64: reply.ciphertext_b64 });
 }
 
 describe("Ratchet fuzz (bounded)", () => {
@@ -12,22 +17,7 @@ describe("Ratchet fuzz (bounded)", () => {
     const trials = 5;
 
     for (let t = 0; t < trials; t++) {
-      const root = randomBytes(32);
-      const aliceDh = generateX25519Keypair();
-      const bobDh = generateX25519Keypair();
-
-      const aliceState = ratchetInit({
-        rk32: root,
-        selfDh: aliceDh,
-        remoteDhPub32: bobDh.pub32,
-        sendingFirst: true,
-      });
-      const bobState = ratchetInit({
-        rk32: root,
-        selfDh: bobDh,
-        remoteDhPub32: aliceDh.pub32,
-        sendingFirst: false,
-      });
+      const { alice: aliceState, bob: bobState } = establishedPair();
 
       const count = 6 + t; // vary a bit
       const envelopes = [];
@@ -36,11 +26,9 @@ describe("Ratchet fuzz (bounded)", () => {
           ratchetEncrypt({
             state: aliceState,
             plaintext: encode(`t${t}-m${i}`),
-            sender_device_id: "alice",
-            recipient_device_id: "bob",
-            advanceDh: i === 3, // periodic DH advance
           })
         );
+        if (i === 3) turnAround(aliceState, bobState); // a DH step mid-batch
       }
 
       // Randomly drop some, duplicate some, and reorder
@@ -65,8 +53,6 @@ describe("Ratchet fuzz (bounded)", () => {
       const follow = ratchetEncrypt({
         state: aliceState,
         plaintext: encode(`t${t}-follow`),
-        sender_device_id: "alice",
-        recipient_device_id: "bob",
       });
       const followDec = ratchetDecrypt({
         state: bobState,

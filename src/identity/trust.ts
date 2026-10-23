@@ -6,7 +6,7 @@ import { IdentityMismatchError } from "../errors.js";
 /**
  * A pinned identity for a single remote device.
  *
- * Two keys are pinned (Signal-style "safety number" semantics):
+ * Two keys are pinned (safety-number semantics):
  * - ik_pub_b64:     X25519 identity key used for X3DH DH agreement.
  * - ik_sig_pub_b64: Ed25519 identity key used to sign signed prekeys.
  *
@@ -44,7 +44,7 @@ function decode32(label: string, b64: string): Uint8Array {
 /**
  * Trust-on-first-use registry with strong, two-key pinning.
  *
- * Best-practice (Signal protocol) semantics: an identity is pinned on first
+ * Semantics: an identity is pinned on first
  * contact and an identity CHANGE is never silently accepted. On a mismatch the
  * device is flagged `blocked_mismatch`, the observed keys are recorded as
  * `pending`, and an {@link IdentityMismatchError} is thrown. Re-keying only
@@ -81,6 +81,27 @@ export class IdentityRegistry {
   /** True if the device has a recorded, unresolved identity mismatch. */
   isBlocked(device_id: string): boolean {
     return this.records.get(device_id)?.blocked_mismatch ?? false;
+  }
+
+  /**
+   * Compares an observed identity with the pinned one and records nothing:
+   * `unknown` when the device has no pin, `match` when both keys equal the pinned
+   * ones (byte for byte), `mismatch` otherwise. A host checks a setup's keys with
+   * this before the message authenticates, and pins (or records a block) with
+   * {@link assertOrPin} only after it does.
+   */
+  check(args: { device_id: string; ik_pub_b64: string; ik_sig_pub_b64: string }): "match" | "unknown" | "mismatch" {
+    assertBoundedString("device_id", args.device_id, MAX_DEVICE_ID_BYTES);
+    const ik = decode32("ik_pub_b64", args.ik_pub_b64);
+    const ikSig = decode32("ik_sig_pub_b64", args.ik_sig_pub_b64);
+    const existing = this.records.get(args.device_id);
+    if (!existing) return "unknown";
+    const ikMatches = timingSafeEqual(decode32("pinned ik_pub_b64", existing.ik_pub_b64), ik);
+    const sigMatches = timingSafeEqual(
+      decode32("pinned ik_sig_pub_b64", existing.ik_sig_pub_b64),
+      ikSig
+    );
+    return ikMatches && sigMatches ? "match" : "mismatch";
   }
 
   /**

@@ -1,14 +1,16 @@
 import { test, expect, describe } from "vitest";
 import type { RatchetState } from "./ratchet.js";
 import {
-  serializeRatchetStateV1,
-  deserializeRatchetStateV1,
-  serializePersistedSessionV1,
-  deserializePersistedSessionV1,
-  type SerializedRatchetStateV1,
+  serializeRatchetStateV2,
+  deserializeRatchetStateV2,
+  serializePersistedSessionV2,
+  deserializePersistedSessionV2,
+  type SerializedRatchetStateV2,
 } from "./serialization.js";
 import { bytesToBase64 } from "../encoding/base64.js";
 import { MAX_SKIPPED_KEYS } from "../crypto/limits.js";
+import { buildAssociatedDataV2 } from "../crypto/ad.js";
+import { ALICE_DEVICE, BOB_DEVICE } from "../test-fixtures.js";
 
 function bytes(seed: number, len = 32): Uint8Array {
   return new Uint8Array(Array.from({ length: len }, (_, i) => (seed + i) % 256));
@@ -21,9 +23,20 @@ function skippedId(seed: number, n: number): string {
 const ID_A = skippedId(30, 0);
 const ID_B = skippedId(40, 3);
 
+const AD = buildAssociatedDataV2({
+  initiator_ik_pub32: bytes(70),
+  responder_ik_pub32: bytes(71),
+  initiator_ik_sig_pub32: bytes(72),
+  responder_ik_sig_pub32: bytes(73),
+  initiator_device_id: ALICE_DEVICE,
+  responder_device_id: BOB_DEVICE,
+});
+
 function sampleState(withSkipped: boolean): RatchetState {
   return {
-    version: 1,
+    version: 2,
+    role: "responder",
+    ad: AD,
     rk32: bytes(1),
     ck_s32: bytes(2),
     ck_r32: bytes(3),
@@ -44,10 +57,12 @@ function sampleState(withSkipped: boolean): RatchetState {
 test("round-trips a state through JSON, including a non-empty skipped map", () => {
   const state = sampleState(true);
 
-  const json = JSON.stringify(serializeRatchetStateV1(state));
-  const restored = deserializeRatchetStateV1(JSON.parse(json));
+  const json = JSON.stringify(serializeRatchetStateV2(state));
+  const restored = deserializeRatchetStateV2(JSON.parse(json));
 
-  expect(restored.version).toBe(1);
+  expect(restored.version).toBe(2);
+  expect(restored.role).toBe("responder");
+  expect(restored.ad).toEqual(AD);
   expect(restored.rk32).toEqual(state.rk32);
   expect(restored.ck_s32).toEqual(state.ck_s32);
   expect(restored.ck_r32).toEqual(state.ck_r32);
@@ -65,27 +80,29 @@ test("round-trips a state through JSON, including a non-empty skipped map", () =
   expect(restored.skipped.get(ID_B)).toEqual(bytes(20));
 });
 
-test("handles undefined chain keys and an empty skipped map", () => {
+test("handles undefined chain keys, no remote key and an empty skipped map", () => {
   const state: RatchetState = {
     ...sampleState(false),
     ck_s32: undefined,
     ck_r32: undefined,
+    dh_remote_pub32: undefined,
   };
 
-  const restored = deserializeRatchetStateV1(
-    JSON.parse(JSON.stringify(serializeRatchetStateV1(state)))
+  const restored = deserializeRatchetStateV2(
+    JSON.parse(JSON.stringify(serializeRatchetStateV2(state)))
   );
 
   expect(restored.ck_s32).toBeUndefined();
   expect(restored.ck_r32).toBeUndefined();
+  expect(restored.dh_remote_pub32).toBeUndefined();
   expect(restored.skipped.size).toBe(0);
 });
 
 test("round-trips a PersistedSession with its optimistic version counter", () => {
   const record = { version: 42, state: sampleState(true) };
 
-  const restored = deserializePersistedSessionV1(
-    JSON.parse(JSON.stringify(serializePersistedSessionV1(record)))
+  const restored = deserializePersistedSessionV2(
+    JSON.parse(JSON.stringify(serializePersistedSessionV2(record)))
   );
 
   expect(restored.version).toBe(42);
@@ -96,7 +113,7 @@ describe("shape checks on a stored ratchet state", () => {
   type Mutable = Record<string, unknown> & { dh_self: Record<string, unknown> };
   const b64 = (len: number, seed = 50) => bytesToBase64(bytes(seed, len));
   const good = () =>
-    JSON.parse(JSON.stringify(serializeRatchetStateV1(sampleState(true)))) as Mutable;
+    JSON.parse(JSON.stringify(serializeRatchetStateV2(sampleState(true)))) as Mutable;
   const set = (field: string, value: unknown) => (s: Mutable) => {
     s[field] = value;
   };
@@ -109,7 +126,12 @@ describe("shape checks on a stored ratchet state", () => {
 
   // [field named in the message, the stored value that breaks it, how it is stored]
   const rows: Array<[string, unknown, (s: Mutable) => void]> = [
-    ["v", 2, set("v", 2)],
+    ["v", 1, set("v", 1)],
+    ["role", "sender", set("role", "sender")],
+    ["role", undefined, set("role", undefined)],
+    ["ad_b64", b64(163), set("ad_b64", b64(163))],
+    ["ad_b64", b64(164), set("ad_b64", b64(164))],
+    ["ad_b64", null, set("ad_b64", null)],
     ["rk32_b64", b64(31), set("rk32_b64", b64(31))],
     ["rk32_b64", "not base64!", set("rk32_b64", "not base64!")],
     ["rk32_b64", 7, set("rk32_b64", 7)],
@@ -127,6 +149,8 @@ describe("shape checks on a stored ratchet state", () => {
     ["dh_self.priv32_b64", b64(31), setDh("priv32_b64", b64(31))],
     ["dh_self.pub32_b64", b64(64), setDh("pub32_b64", b64(64))],
     ["dh_remote_pub32_b64", b64(1), set("dh_remote_pub32_b64", b64(1))],
+    ["dh_remote_pub32_b64", "", set("dh_remote_pub32_b64", "")],
+    ["dh_remote_pub32_b64", undefined, set("dh_remote_pub32_b64", undefined)],
     ["skipped", "none", setSkipped("none")],
     ["skipped[0]", ["lonely"], setSkipped([["lonely"]])],
     ["skipped[0][0]", "key-a:0", setSkipped([["key-a:0", b64(32)]])],
@@ -140,7 +164,7 @@ describe("shape checks on a stored ratchet state", () => {
     mutate(bad);
     let message = "";
     try {
-      deserializeRatchetStateV1(bad as unknown as SerializedRatchetStateV1);
+      deserializeRatchetStateV2(bad as unknown as SerializedRatchetStateV2);
     } catch (err) {
       message = (err as Error).message;
     }
@@ -150,7 +174,7 @@ describe("shape checks on a stored ratchet state", () => {
 
   test("rejects a value that is not a plain object", () => {
     for (const bad of [null, [], "state", 1]) {
-      expect(() => deserializeRatchetStateV1(bad as unknown as SerializedRatchetStateV1)).toThrow(
+      expect(() => deserializeRatchetStateV2(bad as unknown as SerializedRatchetStateV2)).toThrow(
         /^Corrupt session state: root$/
       );
     }
@@ -164,22 +188,22 @@ describe("shape checks on a stored ratchet state", () => {
     const atCap = good();
     atCap.skipped = entries.slice(0, MAX_SKIPPED_KEYS);
     expect(
-      deserializeRatchetStateV1(atCap as unknown as SerializedRatchetStateV1).skipped.size
+      deserializeRatchetStateV2(atCap as unknown as SerializedRatchetStateV2).skipped.size
     ).toBe(MAX_SKIPPED_KEYS);
 
     const over = good();
     over.skipped = entries;
-    expect(() => deserializeRatchetStateV1(over as unknown as SerializedRatchetStateV1)).toThrow(
+    expect(() => deserializeRatchetStateV2(over as unknown as SerializedRatchetStateV2)).toThrow(
       /^Corrupt session state: skipped \(too many entries\)$/
     );
   });
 
   test("a persisted session checks its own version and counter, then the state", () => {
     const record = () =>
-      JSON.parse(JSON.stringify(serializePersistedSessionV1({ version: 3, state: sampleState(false) })));
+      JSON.parse(JSON.stringify(serializePersistedSessionV2({ version: 3, state: sampleState(false) })));
     const cases: Array<[string, (r: Record<string, any>) => void]> = [
       ["root", () => {}],
-      ["v", (r) => (r.v = 2)],
+      ["v", (r) => (r.v = 1)],
       ["version", (r) => (r.version = -1)],
       ["version", (r) => (r.version = 0.5)],
       ["version", (r) => (r.version = "3")],
@@ -188,7 +212,7 @@ describe("shape checks on a stored ratchet state", () => {
     for (const [field, mutate] of cases) {
       const bad = field === "root" ? null : record();
       if (bad) mutate(bad);
-      expect(() => deserializePersistedSessionV1(bad), field).toThrow(
+      expect(() => deserializePersistedSessionV2(bad), field).toThrow(
         new RegExp(`^Corrupt session state: ${field.replace(".", "\\.")}$`)
       );
     }

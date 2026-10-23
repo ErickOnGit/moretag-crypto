@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { ratchetInit, type RatchetState } from "./ratchet.js";
+import type { RatchetState } from "./ratchet.js";
 import {
   InMemoryRatchetStore,
   createPersistedSession,
@@ -8,10 +8,9 @@ import {
   type PersistedSession,
   type RatchetSessionStore,
 } from "./session-store.js";
-import { serializePersistedSessionV1 } from "./serialization.js";
+import { serializePersistedSessionV2 } from "./serialization.js";
 import { DecryptFailedError, ReplayDetectedError, SessionNotFoundError } from "../errors.js";
-import { generateX25519Keypair } from "../crypto/x25519.js";
-import { randomBytes } from "@noble/ciphers/utils.js";
+import { sessionPair } from "../test-fixtures.js";
 
 function encode(str: string): Uint8Array {
   return new TextEncoder().encode(str);
@@ -19,22 +18,7 @@ function encode(str: string): Uint8Array {
 
 describe("Ratchet session store", () => {
   it("persists state across encrypt/decrypt and prevents replay", async () => {
-    const root = randomBytes(32);
-    const aliceDh = generateX25519Keypair();
-    const bobDh = generateX25519Keypair();
-
-    const aliceState = ratchetInit({
-      rk32: root,
-      selfDh: aliceDh,
-      remoteDhPub32: bobDh.pub32,
-      sendingFirst: true,
-    });
-    const bobState = ratchetInit({
-      rk32: root,
-      selfDh: bobDh,
-      remoteDhPub32: aliceDh.pub32,
-      sendingFirst: false,
-    });
+    const { alice: aliceState, bob: bobState } = sessionPair();
 
     const store = new InMemoryRatchetStore();
     store.save("alice->bob", createPersistedSession(aliceState));
@@ -45,8 +29,6 @@ describe("Ratchet session store", () => {
       "alice->bob",
       {
         plaintext: encode("hi"),
-        sender_device_id: "alice-device",
-        recipient_device_id: "bob-device",
       }
     );
 
@@ -67,22 +49,7 @@ describe("Ratchet session store", () => {
   });
 
   it("increments version on every save", async () => {
-    const root = randomBytes(32);
-    const aliceDh = generateX25519Keypair();
-    const bobDh = generateX25519Keypair();
-
-    const aliceState = ratchetInit({
-      rk32: root,
-      selfDh: aliceDh,
-      remoteDhPub32: bobDh.pub32,
-      sendingFirst: true,
-    });
-    const bobState = ratchetInit({
-      rk32: root,
-      selfDh: bobDh,
-      remoteDhPub32: aliceDh.pub32,
-      sendingFirst: false,
-    });
+    const { alice: aliceState, bob: bobState } = sessionPair();
 
     const store = new InMemoryRatchetStore();
     store.save("alice->bob", createPersistedSession(aliceState));
@@ -96,8 +63,6 @@ describe("Ratchet session store", () => {
       "alice->bob",
       {
         plaintext: encode("hello"),
-        sender_device_id: "alice-device",
-        recipient_device_id: "bob-device",
       }
     );
 
@@ -115,13 +80,8 @@ describe("Ratchet session store", () => {
 });
 
 function pair(): { alice: RatchetState; bob: RatchetState } {
-  const root = randomBytes(32);
-  const aliceDh = generateX25519Keypair();
-  const bobDh = generateX25519Keypair();
-  return {
-    alice: ratchetInit({ rk32: root, selfDh: aliceDh, remoteDhPub32: bobDh.pub32, sendingFirst: true }),
-    bob: ratchetInit({ rk32: root, selfDh: bobDh, remoteDhPub32: aliceDh.pub32, sendingFirst: false }),
-  };
+  const { alice, bob } = sessionPair();
+  return { alice, bob };
 }
 
 /** A store with only load and save: the helpers' non-transact path. */
@@ -136,10 +96,8 @@ class LoadSaveStore implements RatchetSessionStore {
 }
 
 function snapshot(store: { load(id: string): PersistedSession | undefined }, id: string): string {
-  return JSON.stringify(serializePersistedSessionV1(store.load(id)!));
+  return JSON.stringify(serializePersistedSessionV2(store.load(id)!));
 }
-
-const SEND = { sender_device_id: "alice-device", recipient_device_id: "bob-device" };
 
 describe("RatchetSessionStore.transact contract", () => {
   it("transact on a missing id throws SessionNotFoundError and never calls fn", () => {
@@ -175,7 +133,7 @@ describe("RatchetSessionStore.transact contract", () => {
 
     const returned = store.transact("s", () => next);
     expect(returned).toBe(next);
-    expect(snapshot(store, "s")).toBe(JSON.stringify(serializePersistedSessionV1(next)));
+    expect(snapshot(store, "s")).toBe(JSON.stringify(serializePersistedSessionV2(next)));
   });
 });
 
@@ -183,12 +141,12 @@ describe("with-store helpers", () => {
   it("a missing id is SessionNotFoundError on the load/save path", async () => {
     const store = new LoadSaveStore();
     await expect(
-      ratchetEncryptWithStore(store, "missing", { plaintext: encode("x"), ...SEND })
+      ratchetEncryptWithStore(store, "missing", { plaintext: encode("x") })
     ).rejects.toBeInstanceOf(SessionNotFoundError);
     const { alice } = pair();
     const sender = new InMemoryRatchetStore();
     sender.save("a", createPersistedSession(alice));
-    const msg = await ratchetEncryptWithStore(sender, "a", { plaintext: encode("x"), ...SEND });
+    const msg = await ratchetEncryptWithStore(sender, "a", { plaintext: encode("x") });
     await expect(ratchetDecryptWithStore(store, "missing", msg)).rejects.toBeInstanceOf(
       SessionNotFoundError
     );
@@ -197,7 +155,7 @@ describe("with-store helpers", () => {
   it("a missing id is SessionNotFoundError on the transact path", async () => {
     const store = new InMemoryRatchetStore();
     await expect(
-      ratchetEncryptWithStore(store, "missing", { plaintext: encode("x"), ...SEND })
+      ratchetEncryptWithStore(store, "missing", { plaintext: encode("x") })
     ).rejects.toBeInstanceOf(SessionNotFoundError);
   });
 
@@ -207,7 +165,7 @@ describe("with-store helpers", () => {
     store.save("a", createPersistedSession(alice));
     store.save("b", createPersistedSession(bob));
 
-    const msg = await ratchetEncryptWithStore(store, "a", { plaintext: encode("hi"), ...SEND });
+    const msg = await ratchetEncryptWithStore(store, "a", { plaintext: encode("hi") });
     expect(store.load("a")!.version).toBe(1);
     const { plaintext } = await ratchetDecryptWithStore(store, "b", msg);
     expect(plaintext).toEqual(encode("hi"));
@@ -219,7 +177,7 @@ describe("with-store helpers", () => {
       const { alice, bob } = pair();
       store.save("a", createPersistedSession(alice));
       store.save("b", createPersistedSession(bob));
-      const msg = await ratchetEncryptWithStore(store, "a", { plaintext: encode("hi"), ...SEND });
+      const msg = await ratchetEncryptWithStore(store, "a", { plaintext: encode("hi") });
       const before = snapshot(store, "b");
 
       const tampered = { ...msg, header: { ...msg.header, dr: { ...msg.header.dr, pn: 1 } } };
@@ -238,7 +196,6 @@ describe("with-store helpers", () => {
       // @ts-expect-error -- passing a state to a with-store helper is a type error
       state: alice,
       plaintext: encode("x"),
-      ...SEND,
     });
   });
 });

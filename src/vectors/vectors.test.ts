@@ -1,7 +1,6 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import { expect, test } from "vitest";
-import { encodeAADFromHeaderV1 } from "../crypto/aad.js";
 import { buildSpkSigMessage } from "../crypto/x3dh.js";
 import { bytesToBase64 } from "../encoding/base64.js";
 
@@ -18,12 +17,6 @@ function hexToBytes(hex: string): Uint8Array {
   }
   return out;
 }
-
-test("delivery AAD vector matches encoding output", () => {
-  const vector = loadJson("delivery-aad-v1.json");
-  const aad = encodeAADFromHeaderV1(vector.header);
-  expect(bytesToBase64(aad)).toBe(vector.aad_b64);
-});
 
 test("SPK signature message vector matches CBOR encoding", () => {
   const vector = loadJson("spk-sig-msg-v1.json");
