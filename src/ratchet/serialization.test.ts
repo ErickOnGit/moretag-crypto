@@ -155,6 +155,10 @@ describe("shape checks on a stored ratchet state", () => {
     ["skipped[0]", ["lonely"], setSkipped([["lonely"]])],
     ["skipped[0][0]", "key-a:0", setSkipped([["key-a:0", b64(32)]])],
     ["skipped[0][0]", `${b64(32)}:01`, setSkipped([[`${b64(32)}:01`, b64(32)]])],
+    // The DH key's base64 must be canonical: "B" sets an unused bit.
+    ["skipped[0][0]", `${"A".repeat(42)}B=:0`, setSkipped([[`${"A".repeat(42)}B=:0`, b64(32)]])],
+    ["skipped[0][0]", `${b64(31)}:0`, setSkipped([[`${b64(31)}:0`, b64(32)]])],
+    ["skipped[0][0]", `${b64(32)}:${2 ** 53}`, setSkipped([[`${b64(32)}:${2 ** 53}`, b64(32)]])],
     ["skipped[1][0] (duplicate)", ID_A, setSkipped([[ID_A, b64(32)], [ID_A, b64(32, 9)]])],
     ["skipped[0][1]", b64(31), setSkipped([[ID_A, b64(31)]])],
   ];
@@ -170,6 +174,13 @@ describe("shape checks on a stored ratchet state", () => {
     }
     expect(message).toBe(`Corrupt session state: ${field}`);
     if (typeof value === "string" && value !== "") expect(message).not.toContain(value);
+  });
+
+  test("accepts a skipped-key id at the largest safe message number", () => {
+    const s = good();
+    const id = `${b64(32)}:${Number.MAX_SAFE_INTEGER}`;
+    s.skipped = [[id, b64(32)]];
+    expect([...deserializeRatchetStateV2(s as unknown as SerializedRatchetStateV2).skipped.keys()]).toEqual([id]);
   });
 
   test("rejects a value that is not a plain object", () => {

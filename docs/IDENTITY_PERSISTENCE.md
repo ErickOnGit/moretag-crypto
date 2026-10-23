@@ -99,7 +99,7 @@ Do not back up or restore identity keys, prekeys or sessions, and do not add suc
 | `assertOrPin(...)` | Pins on first use; on a mismatch records the block (pending keys, `blocked_mismatch`) and throws `IdentityMismatchError`. |
 | `approveRotation(...)` | Accepts a new identity after the user verified it. |
 | `remove(device_id)` | Forgets a removed device. |
-| `exportState()` / `new IdentityRegistry(state)` | Persistence (`IdentityRegistryStateV1`, unchanged). |
+| `exportState()` / `IdentityRegistry.fromState(state)` | Persistence (`IdentityRegistryStateV1`, unchanged). `fromState` checks every field and throws "Corrupt identity state: <field>"; treat that like a record that fails to decrypt. `new IdentityRegistry(state)` runs the same checks and is deprecated; `new IdentityRegistry()` is an empty registry. |
 
 **Pin only after authentication.**
 

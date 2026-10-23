@@ -13,7 +13,7 @@ import type { PersistedSession } from "./session-store.js";
 import { bytesToBase64, decodeStrictBase64 } from "../encoding/base64.js";
 import { MAX_SKIPPED_KEYS } from "../crypto/limits.js";
 import { ASSOCIATED_DATA_V2_LENGTH, parseAssociatedDataV2 } from "../crypto/ad.js";
-import { SKIPPED_KEY_ID } from "./skipped-id.js";
+import { isSkippedKeyId } from "./skipped-id.js";
 
 /** JSON-safe representation of a RatchetState. `v` is the serialization format version. */
 export interface SerializedRatchetStateV2 {
@@ -136,7 +136,7 @@ function readState(serialized: unknown, at: string): RatchetState {
   s.skipped.forEach((entry: unknown, i: number) => {
     if (!Array.isArray(entry) || entry.length !== 2) corrupt(`${at}skipped[${i}]`);
     const [id, mk] = entry as [unknown, unknown];
-    if (typeof id !== "string" || !SKIPPED_KEY_ID.test(id)) corrupt(`${at}skipped[${i}][0]`);
+    if (!isSkippedKeyId(id)) corrupt(`${at}skipped[${i}][0]`);
     // A Map would silently collapse duplicates.
     if (skipped.has(id)) corrupt(`${at}skipped[${i}][0] (duplicate)`);
     skipped.set(id, key32(`${at}skipped[${i}][1]`, mk));
@@ -149,7 +149,8 @@ function readState(serialized: unknown, at: string): RatchetState {
  * Rebuilds a RatchetState from its stored form. Stored state is untrusted input:
  * every field is checked (role, a well-formed 164-byte AD, 32-byte keys, chain
  * keys and the remote key null or 32 bytes, counters non-negative safe integers,
- * at most MAX_SKIPPED_KEYS skipped keys with ids in the ratchet's grammar and no
+ * at most MAX_SKIPPED_KEYS skipped keys with ids in the ratchet's grammar (the
+ * canonical base64 of a 32-byte key, ":", a safe integer) and no
  * duplicates), and a refusal reads "Corrupt session state: <field>" without the
  * stored value.
  */

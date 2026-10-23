@@ -329,13 +329,22 @@ max(`next_opk_id`, `minNextId`), and a host passes the server's high-water mark 
 A signed prekey rotates only to a higher id. Reading a one-time prekey does not
 consume it; `removeOneTimePrekey` (idempotent) does.
 
+**Identity registry** (`IdentityRegistryStateV1`): `{ v: 1, records: { [device_id]:
+{ device_id, ik_pub_b64, ik_sig_pub_b64, pinned_at_ms, last_seen_at_ms,
+blocked_mismatch, pending_ik_pub_b64?, pending_ik_sig_pub_b64?, pending_seen_at_ms? } } }`,
+read back with `IdentityRegistry.fromState`.
+
 Every deserializer treats stored state as untrusted input and checks every field
 (version, role, a well-formed AD, 32-byte keys, null or 32-byte optional keys,
-non-negative safe-integer counters, at most 2,000 skipped keys with well-formed,
-unique ids; for prekeys: canonical device id, ids in range and unique, a current
-signed prekey that exists, `next_opk_id` above every id). A refusal reads
-"Corrupt session state: <field>" or "Corrupt prekey state: <field>" and never
-contains the stored value.
+non-negative safe-integer counters, at most 2,000 skipped keys with unique ids,
+each the canonical base64 of a 32-byte key, ":" and a safe integer n; for
+prekeys: canonical device id, ids in range and unique, a current signed prekey
+that exists, `next_opk_id` above every id; for the identity registry: `v` 1, each
+key equal to its record's `device_id`, canonical 32-byte keys, finite times >= 0,
+a boolean `blocked_mismatch`, the pending keys and time all present or all
+absent). A refusal reads "Corrupt session state: <field>", "Corrupt prekey state:
+<field>" or "Corrupt identity state: <field>" and never contains the stored value
+or a device id.
 
 ## 10. Local seals
 
