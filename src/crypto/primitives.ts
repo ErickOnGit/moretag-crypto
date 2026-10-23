@@ -175,11 +175,15 @@ function completes(fn: () => unknown): boolean {
  * A.3.1), and must match the built-in @noble implementation on fixed inputs at
  * the sizes the protocol uses: HKDF at 32 bytes with a 32-byte zero salt and 128-
  * or 160-byte input (X3DH), at 64 bytes with a 32-byte or empty salt (root and
- * chain steps); AEAD with an empty AAD, an empty plaintext and 16,500 bytes.
- * Every covered primitive is deterministic, so a byte difference would mean keys
- * or ciphertext that other backends cannot read. Throws on the first divergence.
- * This catches a backend that is wrong on these inputs; it cannot prove a backend
- * right on every input. Cost is a few dozen operations, run once at registration.
+ * chain steps); AEAD with an empty AAD, an empty plaintext, 16,500 bytes, and
+ * AADs of 33 bytes (unaligned, past two Poly1305 blocks), 55 bytes (a self seal),
+ * 281 bytes (AD and a pairwise header) and 299 bytes (AD and a header with a
+ * group slot). Every covered primitive is deterministic, so a byte difference
+ * would mean keys or ciphertext that other backends cannot read. A decrypt that
+ * throws on a valid input counts as a divergence. Throws on the first
+ * divergence. This catches a backend that is wrong on these inputs; it cannot
+ * prove a backend right on every input. Cost is a few dozen operations, run
+ * once at registration.
  */
 function selfTest(p: CryptoPrimitivesProvider): void {
   const fail = (what: string): never => {
@@ -269,6 +273,14 @@ function selfTest(p: CryptoPrimitivesProvider): void {
     { label: " (empty AAD)", key, nonce, pt: fixedBytes(100, 23), aad: new Uint8Array(0) },
     { label: " (empty plaintext)", key, nonce, pt: new Uint8Array(0), aad },
     { label: " (16,500-byte plaintext)", key, nonce, pt: fixedBytes(16_500, 27), aad },
+    // The AAD sizes the protocol uses. AD is 164 bytes; a pairwise header H
+    // with small counters is 117 bytes, and 135 with a group slot; a self
+    // seal's AAD is 55 bytes. 33 bytes is unaligned and runs one byte past
+    // two Poly1305 blocks, so a backend that drops AAD past 32 bytes fails here.
+    { label: " (33-byte AAD)", key, nonce, pt: fixedBytes(100, 37), aad: fixedBytes(33, 39) },
+    { label: " (55-byte AAD, self seal)", key, nonce, pt: fixedBytes(100, 41), aad: fixedBytes(55, 43) },
+    { label: " (281-byte AAD, AD and a pairwise header)", key, nonce, pt: fixedBytes(100, 45), aad: fixedBytes(281, 47) },
+    { label: " (299-byte AAD, AD and a group header)", key, nonce, pt: fixedBytes(100, 49), aad: fixedBytes(299, 51) },
   ];
   const xc = XCHACHA_DRAFT03_A3_1;
   if (p.xchacha20poly1305Encrypt) {
@@ -283,12 +295,20 @@ function selfTest(p: CryptoPrimitivesProvider): void {
     }
   }
   if (p.xchacha20poly1305Decrypt) {
-    if (!eq(p.xchacha20poly1305Decrypt(xc.key, xc.nonce, xc.sealed, xc.aad), xc.plaintext)) {
+    // A throw on a valid input is a divergence, reported like any other.
+    const opens = (k: Uint8Array, n: Uint8Array, ct: Uint8Array, ad: Uint8Array, pt: Uint8Array): boolean => {
+      try {
+        return eq(p.xchacha20poly1305Decrypt!(k, n, ct, ad), pt);
+      } catch {
+        return false;
+      }
+    };
+    if (!opens(xc.key, xc.nonce, xc.sealed, xc.aad, xc.plaintext)) {
       fail("xchacha20poly1305Decrypt (draft-irtf-cfrg-xchacha-03 A.3.1)");
     }
     for (const c of aeadCases) {
       const ref = noblePrimitives.xchacha20poly1305Encrypt(c.key, c.nonce, c.pt, c.aad);
-      if (!eq(p.xchacha20poly1305Decrypt(c.key, c.nonce, ref, c.aad), c.pt)) {
+      if (!opens(c.key, c.nonce, ref, c.aad, c.pt)) {
         fail(`xchacha20poly1305Decrypt${c.label}`);
       }
     }

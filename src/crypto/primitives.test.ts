@@ -128,16 +128,107 @@ describe("self-test coverage", () => {
     return c;
   };
 
-  const cases: Array<[string, Omit<CryptoPrimitivesProvider, "name" | "randomBytes">, RegExp]> = [
+  type Overrides = Omit<CryptoPrimitivesProvider, "name" | "randomBytes">;
+  const hkdfDivergingWhen = (
+    when: (ikm: Uint8Array, salt: Uint8Array, length: number) => boolean
+  ): Overrides => ({
+    hkdfSha256: (ikm, salt, info, length) => {
+      const out = noble.hkdfSha256(ikm, salt, info, length);
+      return when(ikm, salt, length) ? flip(out) : out;
+    },
+  });
+  const encryptDivergingAtAad = (size: number): Overrides => ({
+    xchacha20poly1305Encrypt: (key, nonce, pt, aad) => {
+      const out = noble.xchacha20poly1305Encrypt(key, nonce, pt, aad);
+      return aad.length === size ? flip(out) : out;
+    },
+  });
+  const decryptDivergingAtAad = (size: number): Overrides => ({
+    xchacha20poly1305Decrypt: (key, nonce, ct, aad) => {
+      const out = noble.xchacha20poly1305Decrypt(key, nonce, ct, aad);
+      return aad.length === size ? flip(out) : out;
+    },
+  });
+  // A backend that authenticates only the first 32 bytes of AAD: consistent
+  // with itself, so its own messages round-trip, but the Ed25519 keys and
+  // device ids at the end of AD would go unauthenticated.
+  const first32 = (aad: Uint8Array) => aad.subarray(0, 32);
+
+  const cases: Array<[string, Overrides, RegExp]> = [
     [
-      "HKDF length 32",
+      "HKDF length 32 (the RFC 5869 A.1 prefix)",
+      hkdfDivergingWhen((_ikm, _salt, length) => length === 32),
+      /hkdfSha256 \(RFC 5869\) diverges/,
+    ],
+    [
+      "HKDF with X3DH's 128-byte input and zero salt",
+      hkdfDivergingWhen((ikm, salt) => ikm.length === 128 && salt.length === 32),
+      /hkdfSha256 \(length 32, 128-byte input\) diverges/,
+    ],
+    [
+      "HKDF with X3DH's 160-byte input and zero salt",
+      hkdfDivergingWhen((ikm, salt) => ikm.length === 160 && salt.length === 32),
+      /hkdfSha256 \(length 32, 160-byte input\) diverges/,
+    ],
+    [
+      "HKDF length 64 with a 32-byte salt (root step)",
+      hkdfDivergingWhen((_ikm, salt, length) => length === 64 && salt.length === 32),
+      /hkdfSha256 \(length 64\) diverges/,
+    ],
+    [
+      "HKDF length 64 with an empty salt (chain step)",
+      hkdfDivergingWhen((_ikm, salt, length) => length === 64 && salt.length === 0),
+      /hkdfSha256 \(length 64, empty salt\) diverges/,
+    ],
+    ["a 33-byte AAD (encrypt)", encryptDivergingAtAad(33), /xchacha20poly1305Encrypt \(33-byte AAD\) diverges/],
+    [
+      "a self seal's 55-byte AAD (encrypt)",
+      encryptDivergingAtAad(55),
+      /xchacha20poly1305Encrypt \(55-byte AAD, self seal\) diverges/,
+    ],
+    [
+      "a pairwise AD and header, 281 bytes (encrypt)",
+      encryptDivergingAtAad(281),
+      /xchacha20poly1305Encrypt \(281-byte AAD, AD and a pairwise header\) diverges/,
+    ],
+    [
+      "an AD and group header, 299 bytes (encrypt)",
+      encryptDivergingAtAad(299),
+      /xchacha20poly1305Encrypt \(299-byte AAD, AD and a group header\) diverges/,
+    ],
+    ["a 33-byte AAD (decrypt)", decryptDivergingAtAad(33), /xchacha20poly1305Decrypt \(33-byte AAD\) diverges/],
+    [
+      "a self seal's 55-byte AAD (decrypt)",
+      decryptDivergingAtAad(55),
+      /xchacha20poly1305Decrypt \(55-byte AAD, self seal\) diverges/,
+    ],
+    [
+      "a pairwise AD and header, 281 bytes (decrypt)",
+      decryptDivergingAtAad(281),
+      /xchacha20poly1305Decrypt \(281-byte AAD, AD and a pairwise header\) diverges/,
+    ],
+    [
+      "an AD and group header, 299 bytes (decrypt)",
+      decryptDivergingAtAad(299),
+      /xchacha20poly1305Decrypt \(299-byte AAD, AD and a group header\) diverges/,
+    ],
+    [
+      "AAD past 32 bytes, ignored on both sides",
       {
-        hkdfSha256: (ikm, salt, info, length) => {
-          const out = noble.hkdfSha256(ikm, salt, info, length);
-          return length === 32 ? flip(out) : out;
-        },
+        xchacha20poly1305Encrypt: (key, nonce, pt, aad) =>
+          noble.xchacha20poly1305Encrypt(key, nonce, pt, first32(aad)),
+        xchacha20poly1305Decrypt: (key, nonce, ct, aad) =>
+          noble.xchacha20poly1305Decrypt(key, nonce, ct, first32(aad)),
       },
-      /hkdfSha256 .*diverges/,
+      /xchacha20poly1305Encrypt \(33-byte AAD\) diverges/,
+    ],
+    [
+      "AAD past 32 bytes, ignored by decrypt (it throws on a valid input)",
+      {
+        xchacha20poly1305Decrypt: (key, nonce, ct, aad) =>
+          noble.xchacha20poly1305Decrypt(key, nonce, ct, first32(aad)),
+      },
+      /xchacha20poly1305Decrypt \(33-byte AAD\) diverges/,
     ],
     [
       "an empty AAD",
