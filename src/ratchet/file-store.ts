@@ -18,6 +18,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToBase64, decodeStrictBase64 } from "../encoding/base64.js";
 import { assertBoundedString } from "../crypto/validation.js";
 import { MAX_SESSION_ID_BYTES, MAX_SKIPPED_KEYS } from "../crypto/limits.js";
+import { SKIPPED_KEY_ID } from "./skipped-id.js";
 
 /** Current on-disk envelope format: MAC is bound to the session ID. */
 const ENVELOPE_VERSION = 2;
@@ -92,12 +93,6 @@ function assertSafeSessionId(sessionId: string): void {
     throw new TypeError("sessionId must not be '.' or '..'");
   }
 }
-
-/**
- * Skipped-key IDs are `${base64(32-byte DH public key)}:${message number}`, as produced by the
- * ratchet. Anything else can never match an incoming message and only takes up space.
- */
-const SKIPPED_KEY_ID = /^[A-Za-z0-9+/]{43}=:(0|[1-9][0-9]{0,15})$/;
 
 function isSessionEnvelope(v: unknown): v is SessionEnvelope {
   return (

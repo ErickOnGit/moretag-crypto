@@ -13,6 +13,7 @@ import {
 } from "../crypto/limits.js";
 import { assertBoundedString, timingSafeEqual } from "../crypto/validation.js";
 import { ReplayDetectedError } from "../errors.js";
+import { skippedKeyId } from "./skipped-id.js";
 
 export interface RatchetState {
   version: 1;
@@ -25,10 +26,6 @@ export interface RatchetState {
   dh_self: { priv32: Uint8Array; pub32: Uint8Array };
   dh_remote_pub32: Uint8Array;
   skipped: Map<string, Uint8Array>;
-}
-
-function skippedKeyId(dhPub32: Uint8Array, n: number): string {
-  return `${bytesToBase64(dhPub32)}:${n}`;
 }
 
 function assertKey32(label: string, key: Uint8Array): void {
