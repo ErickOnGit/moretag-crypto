@@ -4,4 +4,8 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    # Match the local npm min-release-age: don't propose versions younger than
+    # 14 days. Security updates are not subject to the cooldown.
+    cooldown:
+      default-days: 14
     open-pull-requests-limit: 10
