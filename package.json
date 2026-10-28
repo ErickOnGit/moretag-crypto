@@ -31,7 +31,8 @@
     "build": "tsc",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "verify": "npm run typecheck && npm test && npm run build",
+    "typecheck:tests": "tsc -p tsconfig.test.json",
+    "verify": "npm run typecheck && npm run typecheck:tests && npm test && npm run build",
     "prepare": "npm run build",
     "prepack": "npm run build && npm test"
   },

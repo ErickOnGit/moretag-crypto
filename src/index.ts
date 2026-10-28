@@ -77,6 +77,7 @@ export {
   SessionNotFoundError,
   RatchetStoreConflictError,
   IdentityMismatchError,
+  DecryptFailedError,
 } from "./errors.js";
 
 // Direction-scoped session id derivation

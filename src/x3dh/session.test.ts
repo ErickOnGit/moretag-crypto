@@ -91,9 +91,16 @@ describe("X3DH session wrappers", () => {
     const wrongPrekeys = new X3DHPrekeyManagerV1({ recipient_device_id: "other-device" });
     wrongPrekeys.rotateSignedPrekey(1);
 
-    expect(() =>
-      x3dhResponderWithPrekeysV1({ session_init, prekeys: wrongPrekeys })
-    ).toThrow(/recipient_device_id mismatch/);
+    let message = "";
+    try {
+      x3dhResponderWithPrekeysV1({ session_init, prekeys: wrongPrekeys });
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    expect(message).toMatch(/recipient_device_id mismatch/);
+    // Neither device id reaches the message (hosts log messages).
+    expect(message).not.toMatch(/bob-device/);
+    expect(message).not.toMatch(/other-device/);
   });
 
   it("responder requires the sender's signing key to pin two-key identity", () => {

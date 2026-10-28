@@ -43,7 +43,7 @@ test("rejects a tampered key", () => {
   });
 
   const wrongKey = atobToBytes(sealed.key_b64);
-  wrongKey[0] ^= 1;
+  wrongKey[0]! ^= 1;
 
   expect(() =>
     openAttachmentV1({ ...sealed, key_b64: bytesToBase64(wrongKey) })
@@ -55,7 +55,7 @@ test("rejects tampered ciphertext", () => {
     plaintext: new TextEncoder().encode("top secret"),
   });
 
-  sealed.ciphertext[0] ^= 1;
+  sealed.ciphertext[0]! ^= 1;
 
   expect(() => openAttachmentV1(sealed)).toThrow();
 });

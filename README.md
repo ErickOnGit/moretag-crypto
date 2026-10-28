@@ -79,11 +79,13 @@ registerCryptoPrimitives(
 
 Providers may override any subset of primitives (x25519, ed25519,
 XChaCha20-Poly1305, HKDF-SHA256, randomBytes); the rest keep the @noble
-defaults. A provider must supply a CSPRNG `randomBytes`, and registration runs
-known-answer self-tests of every supplied primitive against the reference
-implementation, rejecting the provider on any divergence — a subtly
-incompatible backend can never silently corrupt sessions. See
-`src/crypto/primitives.ts` for the full contract.
+defaults. A provider must supply a CSPRNG `randomBytes`. Registration
+self-tests every supplied primitive and rejects the provider on any divergence:
+each must reproduce published test vectors (RFC 7748 §6.1, RFC 8032 §7.1 test 1,
+RFC 5869 A.1 and A.3, draft-irtf-cfrg-xchacha-03 A.3.1) and match the built-in
+@noble implementation on fixed inputs at the sizes the protocol uses. This
+catches a backend that is wrong on those inputs; it cannot prove a backend
+right on every input. See `src/crypto/primitives.ts` for the full contract.
 
 ## Wire vs Crypto Validation
 

@@ -1,9 +1,18 @@
-import { test, expect } from "vitest";
+import { test, expect, afterEach } from "vitest";
 import {
   generateX25519Keypair,
   x25519PublicFromPrivate,
   x25519SharedSecret,
 } from "./x25519.js";
+import { getPrimitives, registerCryptoPrimitives, resetCryptoPrimitives } from "./primitives.js";
+
+afterEach(() => {
+  resetCryptoPrimitives();
+});
+
+/** Low-order u-coordinates: every scalar maps them to the all-zero secret. */
+const U0 = new Uint8Array(32);
+const U1 = Uint8Array.from({ length: 32 }, (_, i) => (i === 0 ? 1 : 0));
 
 test("Alice and Bob shared secrets match", () => {
   // Alice generates her keypair
@@ -81,4 +90,24 @@ test("x25519PublicFromPrivate enforces 32-byte private key length", () => {
   expect(() => x25519PublicFromPrivate(new Uint8Array(31))).toThrowError(
     /Invalid private key length.*expected 32 bytes, got 31/
   );
+});
+
+test("u=0 and u=1 are refused", () => {
+  const priv = generateX25519Keypair().priv32;
+  expect(() => x25519SharedSecret(priv, U0)).toThrow();
+  expect(() => x25519SharedSecret(priv, U1)).toThrow();
+});
+
+test("an all-zero secret from a backend that does not refuse it is refused here", () => {
+  const noble = getPrimitives();
+  const lowOrder = (pub: Uint8Array) => (pub[0] ?? 0) <= 1 && pub.subarray(1).every((b) => b === 0);
+  registerCryptoPrimitives({
+    name: "returns-zeros",
+    randomBytes: noble.randomBytes,
+    x25519SharedSecret: (priv, pub) => (lowOrder(pub) ? new Uint8Array(32) : noble.x25519SharedSecret(priv, pub)),
+  });
+  const priv = generateX25519Keypair().priv32;
+  for (const u of [U0, U1]) {
+    expect(() => x25519SharedSecret(priv, u)).toThrow(/^x25519SharedSecret: all-zero shared secret rejected$/);
+  }
 });

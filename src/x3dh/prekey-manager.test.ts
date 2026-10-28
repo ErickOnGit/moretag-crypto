@@ -58,6 +58,25 @@ describe("X3DHPrekeyManagerV1", () => {
     expect(b2.spk_id).toBe(2);
   });
 
+  it("unknown spk or opk id names no id", () => {
+    const bob = X3DHPrekeyManagerV1.create({ recipient_device_id: "bob-device", initial_opk_count: 1 });
+    const calls = [
+      () => bob.getSignedPrekeyPriv32(424242),
+      () => bob.getOneTimePrekeyPriv32("opk-424242"),
+      () => bob.consumeOneTimePrekey(424242),
+    ];
+    for (const call of calls) {
+      let message = "";
+      try {
+        call();
+      } catch (err) {
+        message = (err as Error).message;
+      }
+      expect(message).toMatch(/^Unknown (spk|opk)_id$/);
+      expect(message).not.toMatch(/424242/);
+    }
+  });
+
   describe("static create + lifecycle", () => {
     it("create() yields a usable bundle with the requested OPK count", () => {
       const bob = X3DHPrekeyManagerV1.create({

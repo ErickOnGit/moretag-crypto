@@ -72,10 +72,13 @@ export function x25519SharedSecret(
       `Invalid shared secret length: expected 32 bytes, got ${ss.byteLength}`
     );
   }
-  // Low-order peer keys yield an all-zero secret. @noble and OpenSSL-family
-  // backends both reject this, but each with its own error; check here so
-  // every provider fails identically (RFC 7748 §6.1 MAY-check, Signal-style).
-  if (ss.every((b) => b === 0)) {
+  // Low-order peer keys yield an all-zero secret (RFC 7748 §6.1 MAY-check).
+  // @noble and OpenSSL-family backends refuse them first, each with its own
+  // error; this covers a backend that returns the zeros instead. Constant
+  // time: OR every byte, with no early exit on the first non-zero one.
+  let acc = 0;
+  for (let i = 0; i < ss.length; i++) acc |= ss[i]!;
+  if (acc === 0) {
     throw new Error("x25519SharedSecret: all-zero shared secret rejected");
   }
   return ss;
