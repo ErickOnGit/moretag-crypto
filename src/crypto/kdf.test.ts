@@ -92,8 +92,8 @@ test("kdfChainKey chain: successive calls produce different chain keys", () => {
 });
 
 test("different KDF domains produce different outputs (implicitly tested)", () => {
-  // kdfRootAndChainKey uses "moretag/v1/rkck"
-  // kdfChainKey uses "moretag/v1/ckmk"
+  // kdfRootAndChainKey uses "moretag/v2/rkck"
+  // kdfChainKey uses "moretag/v2/ckmk"
   // This test verifies they produce different outputs for the same input
 
   const input = randomBytes(32);

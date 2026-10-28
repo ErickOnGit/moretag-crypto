@@ -1,196 +1,187 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
+import { X3DHPrekeyManagerV2 } from "./prekey-manager.js";
+import { x3dhInitiatorBootstrapV2, x3dhResponderBootstrapV2 } from "./session.js";
 import { IdentityRegistry } from "../identity/trust.js";
-import { X3DHPrekeyManagerV1 } from "./prekey-manager.js";
+import { ratchetDecrypt, ratchetEncrypt } from "../ratchet/ratchet.js";
+import { bytesToBase64 } from "../encoding/base64.js";
+import { x25519PublicFromPrivate } from "../crypto/x25519.js";
+import { getPrimitives, registerCryptoPrimitives, resetCryptoPrimitives } from "../crypto/primitives.js";
 import {
-  x3dhInitiatorWithTrustV1,
-  x3dhResponderWithPrekeysV1,
-  x3dhInitiatorBootstrapV1,
-  x3dhResponderBootstrapV1,
-} from "./session.js";
-import { x3dhInitiatorV1 } from "../crypto/x3dh.js";
-import { generateX25519Keypair } from "../crypto/x25519.js";
-import { generateEd25519Keypair } from "../crypto/ed25519.js";
-import { ratchetEncrypt, ratchetDecrypt } from "../ratchet/ratchet.js";
+  BadSignatureError,
+  DeviceMismatchError,
+  IdentityMismatchError,
+  SelfSessionError,
+  UnknownPrekeyError,
+} from "../errors.js";
+import type { X3DHPrekeyBundleV2 } from "../wire/x3dh.js";
+import { ALICE_DEVICE, BOB_DEVICE, CAROL_DEVICE, utf8 } from "../test-fixtures.js";
 
-function encode(str: string): Uint8Array {
-  return new TextEncoder().encode(str);
+afterEach(() => resetCryptoPrimitives());
+
+function parties(opts: { opkId?: number } = {}) {
+  const alice = X3DHPrekeyManagerV2.create({ recipient_device_id: ALICE_DEVICE });
+  const bob = X3DHPrekeyManagerV2.create({ recipient_device_id: BOB_DEVICE });
+  const bundle: X3DHPrekeyBundleV2 = bob.getPrekeyBundle();
+  if (opts.opkId !== undefined) {
+    const [opk] = bob.mintOneTimePrekeys(1, opts.opkId);
+    bundle.opk_id = opk!.opk_id;
+    bundle.opk_pub_b64 = bytesToBase64(opk!.pub32);
+  }
+  return { alice, bob, bundle };
 }
 
-describe("X3DH session wrappers", () => {
-  it("pins recipient identity on first use and rejects mismatch", () => {
-    const bob = new X3DHPrekeyManagerV1({ recipient_device_id: "bob-device" });
-    bob.rotateSignedPrekey(1);
-    const aliceIk = generateX25519Keypair();
+function initiate(alice: X3DHPrekeyManagerV2, bundle: X3DHPrekeyBundleV2, trust: IdentityRegistry, expected = BOB_DEVICE) {
+  return x3dhInitiatorBootstrapV2({
+    sender_device_id: ALICE_DEVICE,
+    recipient_bundle: bundle,
+    expected_recipient_device_id: expected,
+    initiator_ik_priv32: alice.ik.priv32,
+    initiator_ik_sig_pub32: alice.ik_sig.pub32,
+    trust,
+  });
+}
+
+function respond(bob: X3DHPrekeyManagerV2, session_init: ReturnType<typeof initiate>["session_init"], sender = ALICE_DEVICE) {
+  return x3dhResponderBootstrapV2({ session_init, prekeys: bob, recipient_device_id: BOB_DEVICE, sender_device_id: sender });
+}
+
+function thrownBy(fn: () => unknown): unknown {
+  try {
+    fn();
+  } catch (err) {
+    return err;
+  }
+  throw new Error("expected a throw");
+}
+
+describe("initiator bootstrap", () => {
+  it("pins the recipient's two keys on first use and refuses a changed identity", () => {
+    const { alice, bundle } = parties();
     const trust = new IdentityRegistry();
+    initiate(alice, bundle, trust);
+    expect(trust.get(BOB_DEVICE)).toMatchObject({ ik_pub_b64: bundle.ik_pub_b64, ik_sig_pub_b64: bundle.ik_sig_pub_b64 });
 
-    const bundle = bob.getPrekeyBundle();
-    const init1 = x3dhInitiatorWithTrustV1({
-      sender_device_id: "alice-device",
-      recipient_bundle: bundle,
-      initiator_ik_priv32: aliceIk.priv32,
-      trust,
-    });
-    const resp1 = x3dhResponderWithPrekeysV1({ session_init: init1.session_init, prekeys: bob });
-    expect(resp1.rk32).toEqual(init1.rk32);
-
-    // Simulate identity mismatch: new IK for bob
-    const bob2 = new X3DHPrekeyManagerV1({ recipient_device_id: "bob-device" });
-    bob2.rotateSignedPrekey(1);
-    const bundle2 = bob2.getPrekeyBundle();
-
-    expect(() =>
-      x3dhInitiatorWithTrustV1({
-        sender_device_id: "alice-device",
-        recipient_bundle: bundle2,
-        initiator_ik_priv32: aliceIk.priv32,
-        trust,
-      })
-    ).toThrow(/mismatch/);
+    const impostor = X3DHPrekeyManagerV2.create({ recipient_device_id: BOB_DEVICE }).getPrekeyBundle();
+    expect(thrownBy(() => initiate(alice, impostor, trust))).toBeInstanceOf(IdentityMismatchError);
+    expect(trust.isBlocked(BOB_DEVICE)).toBe(true);
   });
 
-  it("device removal allows re-trust on next contact", () => {
-    const bob = new X3DHPrekeyManagerV1({ recipient_device_id: "bob-device" });
-    bob.rotateSignedPrekey(1);
+  it("a bad bundle signature is refused before the pin: the registry is unchanged", () => {
+    const { alice, bundle } = parties();
     const trust = new IdentityRegistry();
-    const aliceIk = generateX25519Keypair();
-
-    x3dhInitiatorWithTrustV1({
-      sender_device_id: "alice-device",
-      recipient_bundle: bob.getPrekeyBundle(),
-      initiator_ik_priv32: aliceIk.priv32,
-      trust,
-    });
-
-    trust.remove("bob-device");
-
-    // New bob identity should be accepted as new after removal
-    const bob2 = new X3DHPrekeyManagerV1({ recipient_device_id: "bob-device" });
-    bob2.rotateSignedPrekey(1);
-
-    expect(() =>
-      x3dhInitiatorWithTrustV1({
-        sender_device_id: "alice-device",
-        recipient_bundle: bob2.getPrekeyBundle(),
-        initiator_ik_priv32: aliceIk.priv32,
-        trust,
-      })
-    ).not.toThrow();
+    const forged = { ...bundle, spk_pub_b64: bundle.ik_pub_b64 };
+    expect(thrownBy(() => initiate(alice, forged, trust))).toBeInstanceOf(BadSignatureError);
+    expect(trust.exportState()).toEqual(new IdentityRegistry().exportState());
   });
 
-  it("responder validates recipient_device_id against local prekeys", () => {
-    const bob = new X3DHPrekeyManagerV1({ recipient_device_id: "bob-device" });
-    bob.rotateSignedPrekey(1);
-
-    const aliceIk = generateX25519Keypair();
-    const { session_init } = x3dhInitiatorV1({
-      sender_device_id: "alice-device",
-      recipient_bundle: bob.getPrekeyBundle(),
-      initiator_ik_priv32: aliceIk.priv32,
-    });
-
-    const wrongPrekeys = new X3DHPrekeyManagerV1({ recipient_device_id: "other-device" });
-    wrongPrekeys.rotateSignedPrekey(1);
-
-    let message = "";
-    try {
-      x3dhResponderWithPrekeysV1({ session_init, prekeys: wrongPrekeys });
-    } catch (err) {
-      message = (err as Error).message;
-    }
-    expect(message).toMatch(/recipient_device_id mismatch/);
-    // Neither device id reaches the message (hosts log messages).
-    expect(message).not.toMatch(/bob-device/);
-    expect(message).not.toMatch(/other-device/);
-  });
-
-  it("responder requires the sender's signing key to pin two-key identity", () => {
-    const bob = new X3DHPrekeyManagerV1({ recipient_device_id: "bob-device" });
-    bob.rotateSignedPrekey(1);
+  it("a bundle for another device is device_mismatch before the pin: the registry is unchanged", () => {
+    const { alice } = parties();
+    const carol = X3DHPrekeyManagerV2.create({ recipient_device_id: CAROL_DEVICE });
     const trust = new IdentityRegistry();
-
-    const alice1 = generateX25519Keypair();
-    // session_init WITHOUT the sender's Ed25519 key cannot establish trust.
-    const initNoSig = x3dhInitiatorV1({
-      sender_device_id: "alice-device",
-      recipient_bundle: bob.getPrekeyBundle(),
-      initiator_ik_priv32: alice1.priv32,
-    });
-    expect(() =>
-      x3dhResponderWithPrekeysV1({ session_init: initNoSig.session_init, prekeys: bob, trust })
-    ).toThrow(/sender_ik_sig_pub_b64 is required/);
+    expect(thrownBy(() => initiate(alice, carol.getPrekeyBundle(), trust))).toBeInstanceOf(DeviceMismatchError);
+    expect(trust.get(CAROL_DEVICE)).toBeNull();
   });
 
-  it("responder pins sender identity, blocks rotation, and accepts approveRotation", () => {
-    const bob = new X3DHPrekeyManagerV1({ recipient_device_id: "bob-device" });
-    bob.rotateSignedPrekey(1);
-    const trust = new IdentityRegistry();
-
-    const alice1 = generateX25519Keypair();
-    const alice1Sig = generateEd25519Keypair();
-    const init1 = x3dhInitiatorV1({
-      sender_device_id: "alice-device",
-      recipient_bundle: bob.getPrekeyBundle(),
-      initiator_ik_priv32: alice1.priv32,
-      initiator_ik_sig_pub32: alice1Sig.pub32,
-    });
-    expect(() =>
-      x3dhResponderWithPrekeysV1({ session_init: init1.session_init, prekeys: bob, trust })
-    ).not.toThrow();
-
-    // A different sender identity is rejected (no silent rotation).
-    const alice2 = generateX25519Keypair();
-    const alice2Sig = generateEd25519Keypair();
-    const init2 = x3dhInitiatorV1({
-      sender_device_id: "alice-device",
-      recipient_bundle: bob.getPrekeyBundle(),
-      initiator_ik_priv32: alice2.priv32,
-      initiator_ik_sig_pub32: alice2Sig.pub32,
-    });
-    expect(() =>
-      x3dhResponderWithPrekeysV1({ session_init: init2.session_init, prekeys: bob, trust })
-    ).toThrow(/mismatch/);
-    expect(trust.isBlocked("alice-device")).toBe(true);
-
-    // Out-of-band approval of the new identity unblocks subsequent contact.
-    trust.approveRotation({
-      device_id: "alice-device",
-      ik_pub_b64: init2.session_init.sender_ik_pub_b64,
-      ik_sig_pub_b64: init2.session_init.sender_ik_sig_pub_b64!,
-    });
-    expect(() =>
-      x3dhResponderWithPrekeysV1({ session_init: init2.session_init, prekeys: bob, trust })
-    ).not.toThrow();
+  it("refuses a session with itself", () => {
+    const { alice } = parties();
+    expect(thrownBy(() => initiate(alice, alice.getPrekeyBundle(), new IdentityRegistry(), ALICE_DEVICE))).toBeInstanceOf(
+      SelfSessionError
+    );
   });
 
-  it("bootstraps X3DH + ratchet states that interoperate for first message", () => {
-    const bob = new X3DHPrekeyManagerV1({ recipient_device_id: "bob-device" });
-    bob.rotateSignedPrekey(1);
-    const aliceIk = generateX25519Keypair();
-
-    const init = x3dhInitiatorBootstrapV1({
-      sender_device_id: "alice-device",
-      recipient_bundle: bob.getPrekeyBundle(),
-      initiator_ik_priv32: aliceIk.priv32,
+  it("draws the EK, then DHs, and nothing else", () => {
+    const { alice, bundle } = parties();
+    const noble = getPrimitives();
+    const draws: Uint8Array[] = [];
+    let recording = false;
+    registerCryptoPrimitives({
+      name: "recording",
+      randomBytes: (n) => {
+        const out = noble.randomBytes(n);
+        if (recording) draws.push(out.slice());
+        return out;
+      },
     });
-    const resp = x3dhResponderBootstrapV1({
-      session_init: init.session_init,
-      prekeys: bob,
-    });
+    recording = true;
+    const { session_init, ratchet_state } = initiate(alice, bundle, new IdentityRegistry());
+    recording = false;
+    expect(draws.map((d) => d.length)).toEqual([32, 32]);
+    expect(bytesToBase64(x25519PublicFromPrivate(draws[0]!))).toBe(session_init.ek_pub_b64);
+    expect(x25519PublicFromPrivate(draws[1]!)).toEqual(ratchet_state.dh_self.pub32);
+  });
+});
 
-    expect(resp.rk32).toEqual(init.rk32);
+describe("responder bootstrap", () => {
+  it.each([undefined, 300])("interoperates with the initiator for the first message (opk %s)", (opkId) => {
+    const { alice, bob, bundle } = parties(opkId === undefined ? {} : { opkId });
+    const init = initiate(alice, bundle, new IdentityRegistry());
+    const resp = respond(bob, init.session_init);
+    expect(resp.used).toEqual(opkId === undefined ? { spk_id: 1 } : { spk_id: 1, opk_id: opkId });
 
-    const env = ratchetEncrypt({
-      state: init.ratchet_state,
-      plaintext: encode("hello"),
-      sender_device_id: "alice-device",
-      recipient_device_id: "bob-device",
-    });
-    const dec = ratchetDecrypt({
-      state: resp.ratchet_state,
-      header: env.header,
-      ciphertext_b64: env.ciphertext_b64,
-    });
+    const m = ratchetEncrypt({ state: init.ratchet_state, plaintext: utf8("hi") });
+    expect(ratchetDecrypt({ state: resp.ratchet_state, header: m.header, ciphertext_b64: m.ciphertext_b64 }).plaintext).toEqual(utf8("hi"));
+    const r = ratchetEncrypt({ state: resp.ratchet_state, plaintext: utf8("hi back") });
+    expect(ratchetDecrypt({ state: init.ratchet_state, header: r.header, ciphertext_b64: r.ciphertext_b64 }).plaintext).toEqual(
+      utf8("hi back")
+    );
+  });
 
-    expect(new TextDecoder().decode(dec.plaintext)).toBe("hello");
+  it("consumes nothing: the prekey state is unchanged and a second bootstrap works", () => {
+    const { alice, bob, bundle } = parties({ opkId: 300 });
+    const init = initiate(alice, bundle, new IdentityRegistry());
+    const before = JSON.stringify(bob.exportState());
+    respond(bob, init.session_init);
+    respond(bob, init.session_init);
+    expect(JSON.stringify(bob.exportState())).toBe(before);
+  });
+
+  it("a one-time prekey this device no longer holds is unknown_opk; an unknown SPK is unknown_spk", () => {
+    const { alice, bob, bundle } = parties({ opkId: 300 });
+    const init = initiate(alice, bundle, new IdentityRegistry());
+    bob.removeOneTimePrekey(300);
+    const before = JSON.stringify(bob.exportState());
+    const err = thrownBy(() => respond(bob, init.session_init));
+    expect(err).toBeInstanceOf(UnknownPrekeyError);
+    expect((err as UnknownPrekeyError).code).toBe("unknown_opk");
+    expect(JSON.stringify(bob.exportState())).toBe(before);
+
+    const spkErr = thrownBy(() => respond(bob, { ...init.session_init, spk_id: 9, used_opk: false, opk_id: undefined } as never));
+    expect((spkErr as UnknownPrekeyError).code).toBe("unknown_spk");
+  });
+
+  it("a sidecar sender differing from the host's sender_device_id is device_mismatch", () => {
+    const { alice, bob, bundle } = parties();
+    const init = initiate(alice, bundle, new IdentityRegistry());
+    expect(thrownBy(() => respond(bob, init.session_init, CAROL_DEVICE))).toBeInstanceOf(DeviceMismatchError);
+    expect(thrownBy(() => respond(bob, { ...init.session_init, sender_device_id: CAROL_DEVICE }))).toBeInstanceOf(
+      DeviceMismatchError
+    );
+  });
+
+  it("a prekey manager for another device is device_mismatch", () => {
+    const { alice, bundle } = parties();
+    const init = initiate(alice, bundle, new IdentityRegistry());
+    const carol = X3DHPrekeyManagerV2.create({ recipient_device_id: CAROL_DEVICE });
+    expect(
+      thrownBy(() =>
+        x3dhResponderBootstrapV2({
+          session_init: init.session_init,
+          prekeys: carol,
+          recipient_device_id: BOB_DEVICE,
+          sender_device_id: ALICE_DEVICE,
+        })
+      )
+    ).toBeInstanceOf(DeviceMismatchError);
+  });
+
+  it("the responder state does not alias the manager's signed prekey (alias regression)", () => {
+    const { alice, bob, bundle } = parties();
+    const init = initiate(alice, bundle, new IdentityRegistry());
+    const { ratchet_state } = respond(bob, init.session_init);
+    const spkBefore = bob.getCurrentSignedPrekey();
+    ratchet_state.dh_self.priv32.fill(0);
+    ratchet_state.dh_self.pub32.fill(0);
+    expect(bob.getCurrentSignedPrekey()).toEqual(spkBefore);
+    expect(bob.getCurrentSignedPrekey().priv32.some((b) => b !== 0)).toBe(true);
   });
 });

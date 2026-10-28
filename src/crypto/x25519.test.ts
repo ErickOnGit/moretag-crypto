@@ -5,6 +5,7 @@ import {
   x25519SharedSecret,
 } from "./x25519.js";
 import { getPrimitives, registerCryptoPrimitives, resetCryptoPrimitives } from "./primitives.js";
+import { LowOrderKeyError } from "../errors.js";
 
 afterEach(() => {
   resetCryptoPrimitives();
@@ -94,8 +95,8 @@ test("x25519PublicFromPrivate enforces 32-byte private key length", () => {
 
 test("u=0 and u=1 are refused", () => {
   const priv = generateX25519Keypair().priv32;
-  expect(() => x25519SharedSecret(priv, U0)).toThrow();
-  expect(() => x25519SharedSecret(priv, U1)).toThrow();
+  expect(() => x25519SharedSecret(priv, U0)).toThrow(LowOrderKeyError);
+  expect(() => x25519SharedSecret(priv, U1)).toThrow(LowOrderKeyError);
 });
 
 test("an all-zero secret from a backend that does not refuse it is refused here", () => {
@@ -108,6 +109,6 @@ test("an all-zero secret from a backend that does not refuse it is refused here"
   });
   const priv = generateX25519Keypair().priv32;
   for (const u of [U0, U1]) {
-    expect(() => x25519SharedSecret(priv, u)).toThrow(/^x25519SharedSecret: all-zero shared secret rejected$/);
+    expect(() => x25519SharedSecret(priv, u)).toThrow(LowOrderKeyError);
   }
 });

@@ -1,597 +1,341 @@
-/**
- * Tests for X3DH v1 session initialization with signed prekey verification.
- */
-
 import { describe, it, expect } from "vitest";
-import type {
-  X3DHPrekeyBundleV1,
-  X3DHSessionInitV1,
-} from "../wire/x3dh.js";
 import {
-  decodeX25519PubB64,
+  buildOpkBatchSigMessage,
   buildSpkSigMessage,
-  x3dhInitiatorV1,
-  x3dhResponderV1,
+  verifyPrekeyBundleV2,
+  x3dhInitiatorV2,
+  x3dhResponderV2,
 } from "./x3dh.js";
-import { generateX25519Keypair } from "./x25519.js";
+import { generateX25519Keypair, x25519SharedSecret } from "./x25519.js";
 import { generateEd25519Keypair, ed25519Sign } from "./ed25519.js";
-import { bytesToBase64 } from "../encoding/base64.js";
+import { hkdfSha256 } from "./hkdf.js";
+import { parseAssociatedDataV2 } from "./ad.js";
+import { bytesToBase64, decodeStrictBase64 } from "../encoding/base64.js";
+import {
+  BadSignatureError,
+  DeviceMismatchError,
+  InvalidDeviceIdError,
+  InvalidWireError,
+  LowOrderKeyError,
+  SelfSessionError,
+} from "../errors.js";
+import { X3DH_ALG_V2, type X3DHPrekeyBundleV2, type X3DHSessionInitV2 } from "../wire/x3dh.js";
+import { ALICE_DEVICE, BOB_DEVICE, CAROL_DEVICE } from "../test-fixtures.js";
 
-describe("X3DH v1", () => {
-  // Helper to create a signed prekey bundle
-  function createSignedBundle(args: {
-    recipient_device_id: string;
-    recipient_ik: ReturnType<typeof generateX25519Keypair>;
-    recipient_spk: ReturnType<typeof generateX25519Keypair>;
-    recipient_ik_sig: ReturnType<typeof generateEd25519Keypair>;
-    spk_id: number | string;
-    opk?: ReturnType<typeof generateX25519Keypair>;
-    opk_id?: number | string;
-  }): X3DHPrekeyBundleV1 {
-    const { recipient_device_id, recipient_ik, recipient_spk, recipient_ik_sig, spk_id, opk, opk_id } = args;
+function bob(opts: { withOpk?: boolean; deviceId?: string; spkId?: number } = {}) {
+  const deviceId = opts.deviceId ?? BOB_DEVICE;
+  const spkId = opts.spkId ?? 7;
+  const ik = generateX25519Keypair();
+  const ikSig = generateEd25519Keypair();
+  const spk = generateX25519Keypair();
+  const opk = generateX25519Keypair();
+  const bundle: X3DHPrekeyBundleV2 = {
+    v: 2,
+    alg: X3DH_ALG_V2,
+    recipient_device_id: deviceId,
+    ik_pub_b64: bytesToBase64(ik.pub32),
+    ik_sig_pub_b64: bytesToBase64(ikSig.pub32),
+    spk_pub_b64: bytesToBase64(spk.pub32),
+    spk_id: spkId,
+    spk_sig_b64: bytesToBase64(
+      ed25519Sign(
+        ikSig.priv32,
+        buildSpkSigMessage({ recipient_device_id: deviceId, ik_pub32: ik.pub32, spk_pub32: spk.pub32, spk_id: spkId })
+      )
+    ),
+    ...(opts.withOpk ? { opk_id: 300, opk_pub_b64: bytesToBase64(opk.pub32) } : {}),
+  };
+  return { ik, ikSig, spk, opk, bundle };
+}
 
-    const sigMsg = buildSpkSigMessage({
-      recipient_device_id,
-      ik_pub32: recipient_ik.pub32,
-      spk_pub32: recipient_spk.pub32,
-      spk_id,
-    });
+function alice() {
+  return { ik: generateX25519Keypair(), ikSig: generateEd25519Keypair() };
+}
 
-    const spk_sig = ed25519Sign(recipient_ik_sig.priv32, sigMsg);
+function initiate(a: ReturnType<typeof alice>, bundle: X3DHPrekeyBundleV2, expected = BOB_DEVICE) {
+  return x3dhInitiatorV2({
+    sender_device_id: ALICE_DEVICE,
+    recipient_bundle: bundle,
+    expected_recipient_device_id: expected,
+    initiator_ik_priv32: a.ik.priv32,
+    initiator_ik_sig_pub32: a.ikSig.pub32,
+  });
+}
 
-    const bundle: X3DHPrekeyBundleV1 = {
-      v: 1,
-      alg: "x3dh-x25519-hkdf-sha256+ed25519",
-      recipient_device_id,
-      ik_pub_b64: bytesToBase64(recipient_ik.pub32),
-      spk_pub_b64: bytesToBase64(recipient_spk.pub32),
-      spk_sig_b64: bytesToBase64(spk_sig),
-      ik_sig_pub_b64: bytesToBase64(recipient_ik_sig.pub32),
-      spk_id,
-    };
+function respond(b: ReturnType<typeof bob>, session_init: X3DHSessionInitV2, withOpk = false) {
+  return x3dhResponderV2({
+    session_init,
+    sender_device_id: ALICE_DEVICE,
+    recipient_device_id: BOB_DEVICE,
+    recipient_ik_priv32: b.ik.priv32,
+    recipient_ik_sig_pub32: b.ikSig.pub32,
+    recipient_spk_priv32: b.spk.priv32,
+    ...(withOpk ? { recipient_opk_priv32: b.opk.priv32 } : {}),
+  });
+}
 
-    if (opk && opk_id !== undefined) {
-      bundle.opk_pub_b64 = bytesToBase64(opk.pub32);
-      bundle.opk_id = opk_id;
-    }
-
-    return bundle;
+function thrownBy(fn: () => unknown): unknown {
+  try {
+    fn();
+  } catch (err) {
+    return err;
   }
+  throw new Error("expected a throw");
+}
 
-  describe("decodeX25519PubB64", () => {
-    it("should decode valid 32-byte base64", () => {
-      const key = new Uint8Array(32).fill(42);
-      const b64 = bytesToBase64(key);
-      const decoded = decodeX25519PubB64(b64, "test_key");
-      expect(decoded).toEqual(key);
-    });
+describe("X3DH v2", () => {
+  it.each([false, true])("both sides derive the same SK and AD (one-time prekey: %s)", (withOpk) => {
+    const a = alice();
+    const b = bob({ withOpk });
+    const init = initiate(a, b.bundle);
+    const resp = respond(b, init.session_init, withOpk);
+    expect(resp.sk32).toEqual(init.sk32);
+    expect(resp.ad).toEqual(init.ad);
 
-    it("should throw TypeError on wrong decoded length", () => {
-      const key = new Uint8Array(16); // Wrong length
-      const b64 = bytesToBase64(key);
-      expect(() => decodeX25519PubB64(b64, "test_key")).toThrow(TypeError);
-      expect(() => decodeX25519PubB64(b64, "test_key"))
-        .toThrow("Invalid test_key length: expected 32 bytes, got 16");
-    });
-  });
-
-  describe("initiator/responder agreement", () => {
-    it("should compute matching rk32 without OPK", () => {
-      // Generate recipient keys
-      const recipient_ik = generateX25519Keypair();
-      const recipient_spk = generateX25519Keypair();
-      const recipient_ik_sig = generateEd25519Keypair();
-
-      const bundle = createSignedBundle({
-        recipient_device_id: "bob-device-1",
-        recipient_ik,
-        recipient_spk,
-        recipient_ik_sig,
-        spk_id: 100,
-      });
-
-      // Generate initiator keys
-      const initiator_ik = generateX25519Keypair();
-      const initiator_ek = generateX25519Keypair();
-
-      // Initiator computes session
-      const initResult = x3dhInitiatorV1({
-        sender_device_id: "alice-device-1",
-        recipient_bundle: bundle,
-        initiator_ik_priv32: initiator_ik.priv32,
-        initiator_ek_priv32: initiator_ek.priv32,
-      });
-
-      expect(initResult.session_init.used_opk).toBe(false);
-      expect(initResult.session_init.spk_id).toBe(100);
-      expect(initResult.session_init.opk_id).toBeUndefined();
-
-      // Responder computes session
-      const respResult = x3dhResponderV1({
-        session_init: initResult.session_init,
-        recipient_ik_priv32: recipient_ik.priv32,
-        recipient_spk_priv32: recipient_spk.priv32,
-      });
-
-      // Both should compute the same rk32
-      expect(respResult.rk32).toEqual(initResult.rk32);
-      expect(initResult.rk32.byteLength).toBe(32);
-    });
-
-    it("should compute matching rk32 with OPK", () => {
-      // Generate recipient keys including OPK
-      const recipient_ik = generateX25519Keypair();
-      const recipient_spk = generateX25519Keypair();
-      const recipient_opk = generateX25519Keypair();
-      const recipient_ik_sig = generateEd25519Keypair();
-
-      const bundle = createSignedBundle({
-        recipient_device_id: "bob-device-1",
-        recipient_ik,
-        recipient_spk,
-        recipient_ik_sig,
-        spk_id: 100,
-        opk: recipient_opk,
-        opk_id: 42,
-      });
-
-      // Generate initiator keys
-      const initiator_ik = generateX25519Keypair();
-      const initiator_ek = generateX25519Keypair();
-
-      // Initiator computes session
-      const initResult = x3dhInitiatorV1({
-        sender_device_id: "alice-device-1",
-        recipient_bundle: bundle,
-        initiator_ik_priv32: initiator_ik.priv32,
-        initiator_ek_priv32: initiator_ek.priv32,
-      });
-
-      expect(initResult.session_init.used_opk).toBe(true);
-      expect(initResult.session_init.spk_id).toBe(100);
-      expect(initResult.session_init.opk_id).toBe(42);
-
-      // Responder computes session with OPK
-      const respResult = x3dhResponderV1({
-        session_init: initResult.session_init,
-        recipient_ik_priv32: recipient_ik.priv32,
-        recipient_spk_priv32: recipient_spk.priv32,
-        recipient_opk_priv32: recipient_opk.priv32,
-      });
-
-      // Both should compute the same rk32
-      expect(respResult.rk32).toEqual(initResult.rk32);
-      expect(initResult.rk32.byteLength).toBe(32);
-    });
-
-    it("should generate ephemeral key if not provided", () => {
-      const recipient_ik = generateX25519Keypair();
-      const recipient_spk = generateX25519Keypair();
-      const recipient_ik_sig = generateEd25519Keypair();
-
-      const bundle = createSignedBundle({
-        recipient_device_id: "bob-device-1",
-        recipient_ik,
-        recipient_spk,
-        recipient_ik_sig,
-        spk_id: 100,
-      });
-
-      const initiator_ik = generateX25519Keypair();
-
-      // Don't provide initiator_ek_priv32
-      const initResult = x3dhInitiatorV1({
-        sender_device_id: "alice-device-1",
-        recipient_bundle: bundle,
-        initiator_ik_priv32: initiator_ik.priv32,
-      });
-
-      expect(initResult.rk32.byteLength).toBe(32);
-      expect(initResult.session_init.ek_pub_b64).toBeTruthy();
-
-      // Verify responder can still compute matching key
-      const respResult = x3dhResponderV1({
-        session_init: initResult.session_init,
-        recipient_ik_priv32: recipient_ik.priv32,
-        recipient_spk_priv32: recipient_spk.priv32,
-      });
-
-      expect(respResult.rk32).toEqual(initResult.rk32);
+    const parsed = parseAssociatedDataV2(init.ad);
+    expect(parsed).toEqual({
+      initiator_ik_pub32: a.ik.pub32,
+      responder_ik_pub32: b.ik.pub32,
+      initiator_ik_sig_pub32: a.ikSig.pub32,
+      responder_ik_sig_pub32: b.ikSig.pub32,
+      initiator_device_id: ALICE_DEVICE,
+      responder_device_id: BOB_DEVICE,
     });
   });
 
-  describe("signature verification", () => {
-    it("should reject invalid SPK signature", () => {
-      const recipient_ik = generateX25519Keypair();
-      const recipient_spk = generateX25519Keypair();
-      const recipient_ik_sig = generateEd25519Keypair();
-
-      // Sign with wrong message
-      const wrongMsg = new Uint8Array(64).fill(0xff);
-      const wrongSig = ed25519Sign(recipient_ik_sig.priv32, wrongMsg);
-
-      const bundle: X3DHPrekeyBundleV1 = {
-        v: 1,
-        alg: "x3dh-x25519-hkdf-sha256+ed25519",
-        recipient_device_id: "bob-device-1",
-        ik_pub_b64: bytesToBase64(recipient_ik.pub32),
-        spk_pub_b64: bytesToBase64(recipient_spk.pub32),
-        spk_sig_b64: bytesToBase64(wrongSig),
-        ik_sig_pub_b64: bytesToBase64(recipient_ik_sig.pub32),
-        spk_id: 100,
-      };
-
-      const initiator_ik = generateX25519Keypair();
-
-      expect(() =>
-        x3dhInitiatorV1({
-          sender_device_id: "alice-device-1",
-          recipient_bundle: bundle,
-          initiator_ik_priv32: initiator_ik.priv32,
-        })
-      ).toThrow(TypeError);
-      expect(() =>
-        x3dhInitiatorV1({
-          sender_device_id: "alice-device-1",
-          recipient_bundle: bundle,
-          initiator_ik_priv32: initiator_ik.priv32,
-        })
-      ).toThrow("Invalid spk_sig_b64: signature verification failed");
-    });
-
-    it("should reject if spk_sig is signed by wrong key", () => {
-      const recipient_ik = generateX25519Keypair();
-      const recipient_spk = generateX25519Keypair();
-      const recipient_ik_sig = generateEd25519Keypair();
-      const wrongSigKey = generateEd25519Keypair();
-
-      // Build correct message but sign with wrong key
-      const sigMsg = buildSpkSigMessage({
-        recipient_device_id: "bob-device-1",
-        ik_pub32: recipient_ik.pub32,
-        spk_pub32: recipient_spk.pub32,
-        spk_id: 100,
-      });
-
-      const wrongSig = ed25519Sign(wrongSigKey.priv32, sigMsg);
-
-      const bundle: X3DHPrekeyBundleV1 = {
-        v: 1,
-        alg: "x3dh-x25519-hkdf-sha256+ed25519",
-        recipient_device_id: "bob-device-1",
-        ik_pub_b64: bytesToBase64(recipient_ik.pub32),
-        spk_pub_b64: bytesToBase64(recipient_spk.pub32),
-        spk_sig_b64: bytesToBase64(wrongSig),
-        ik_sig_pub_b64: bytesToBase64(recipient_ik_sig.pub32),
-        spk_id: 100,
-      };
-
-      const initiator_ik = generateX25519Keypair();
-
-      expect(() =>
-        x3dhInitiatorV1({
-          sender_device_id: "alice-device-1",
-          recipient_bundle: bundle,
-          initiator_ik_priv32: initiator_ik.priv32,
-        })
-      ).toThrow(TypeError);
-    });
-
-    it("should reject if signature was created with different spk_id", () => {
-      const recipient_ik = generateX25519Keypair();
-      const recipient_spk = generateX25519Keypair();
-      const recipient_ik_sig = generateEd25519Keypair();
-
-      // Create bundle with spk_id 100, but signature was for spk_id 999
-      const bundleWithWrongId = createSignedBundle({
-        recipient_device_id: "bob-device-1",
-        recipient_ik,
-        recipient_spk,
-        recipient_ik_sig,
-        spk_id: 999, // Signature created with this ID
-      });
-
-      // Change the spk_id after signing
-      bundleWithWrongId.spk_id = 100;
-
-      const initiator_ik = generateX25519Keypair();
-
-      expect(() =>
-        x3dhInitiatorV1({
-          sender_device_id: "alice-device-1",
-          recipient_bundle: bundleWithWrongId,
-          initiator_ik_priv32: initiator_ik.priv32,
-        })
-      ).toThrow("Invalid spk_sig_b64: signature verification failed");
-    });
-  });
-
-  describe("length enforcement", () => {
-    it("should throw TypeError for invalid initiator_ik_priv32 length", () => {
-      const recipient_ik = generateX25519Keypair();
-      const recipient_spk = generateX25519Keypair();
-      const recipient_ik_sig = generateEd25519Keypair();
-
-      const bundle = createSignedBundle({
-        recipient_device_id: "bob-device-1",
-        recipient_ik,
-        recipient_spk,
-        recipient_ik_sig,
-        spk_id: 100,
-      });
-
-      expect(() =>
-        x3dhInitiatorV1({
-          sender_device_id: "alice-device-1",
-          recipient_bundle: bundle,
-          initiator_ik_priv32: new Uint8Array(16), // Wrong length
-        })
-      ).toThrow(TypeError);
-      expect(() =>
-        x3dhInitiatorV1({
-          sender_device_id: "alice-device-1",
-          recipient_bundle: bundle,
-          initiator_ik_priv32: new Uint8Array(16),
-        })
-      ).toThrow("Invalid initiator_ik_priv32 length: expected 32 bytes, got 16");
-    });
-
-    it("should throw TypeError for invalid spk_sig_b64 length", () => {
-      const recipient_ik = generateX25519Keypair();
-      const recipient_spk = generateX25519Keypair();
-      const recipient_ik_sig = generateEd25519Keypair();
-
-      const bundle: X3DHPrekeyBundleV1 = {
-        v: 1,
-        alg: "x3dh-x25519-hkdf-sha256+ed25519",
-        recipient_device_id: "bob-device-1",
-        ik_pub_b64: bytesToBase64(recipient_ik.pub32),
-        spk_pub_b64: bytesToBase64(recipient_spk.pub32),
-        spk_sig_b64: bytesToBase64(new Uint8Array(32)), // Wrong length (should be 64)
-        ik_sig_pub_b64: bytesToBase64(recipient_ik_sig.pub32),
-        spk_id: 100,
-      };
-
-      const initiator_ik = generateX25519Keypair();
-
-      expect(() =>
-        x3dhInitiatorV1({
-          sender_device_id: "alice-device-1",
-          recipient_bundle: bundle,
-          initiator_ik_priv32: initiator_ik.priv32,
-        })
-      ).toThrow(TypeError);
-      expect(() =>
-        x3dhInitiatorV1({
-          sender_device_id: "alice-device-1",
-          recipient_bundle: bundle,
-          initiator_ik_priv32: initiator_ik.priv32,
-        })
-      ).toThrow("Invalid spk_sig_b64 length: expected 64 bytes, got 32");
-    });
-
-    it("should throw TypeError for invalid ik_sig_pub_b64 length", () => {
-      const recipient_ik = generateX25519Keypair();
-      const recipient_spk = generateX25519Keypair();
-
-      const bundle: X3DHPrekeyBundleV1 = {
-        v: 1,
-        alg: "x3dh-x25519-hkdf-sha256+ed25519",
-        recipient_device_id: "bob-device-1",
-        ik_pub_b64: bytesToBase64(recipient_ik.pub32),
-        spk_pub_b64: bytesToBase64(recipient_spk.pub32),
-        spk_sig_b64: bytesToBase64(new Uint8Array(64)),
-        ik_sig_pub_b64: bytesToBase64(new Uint8Array(16)), // Wrong length
-        spk_id: 100,
-      };
-
-      const initiator_ik = generateX25519Keypair();
-
-      expect(() =>
-        x3dhInitiatorV1({
-          sender_device_id: "alice-device-1",
-          recipient_bundle: bundle,
-          initiator_ik_priv32: initiator_ik.priv32,
-        })
-      ).toThrow(TypeError);
-      expect(() =>
-        x3dhInitiatorV1({
-          sender_device_id: "alice-device-1",
-          recipient_bundle: bundle,
-          initiator_ik_priv32: initiator_ik.priv32,
-        })
-      ).toThrow("Invalid ik_sig_pub_b64 length: expected 32 bytes, got 16");
-    });
-  });
-
-  describe("OPK identification", () => {
-    it("should include opk_id in session_init when OPK is used", () => {
-      const recipient_ik = generateX25519Keypair();
-      const recipient_spk = generateX25519Keypair();
-      const recipient_opk = generateX25519Keypair();
-      const recipient_ik_sig = generateEd25519Keypair();
-
-      const bundle = createSignedBundle({
-        recipient_device_id: "bob-device-1",
-        recipient_ik,
-        recipient_spk,
-        recipient_ik_sig,
-        spk_id: 100,
-        opk: recipient_opk,
-        opk_id: "opk-12345",
-      });
-
-      const initiator_ik = generateX25519Keypair();
-
-      const initResult = x3dhInitiatorV1({
-        sender_device_id: "alice-device-1",
-        recipient_bundle: bundle,
-        initiator_ik_priv32: initiator_ik.priv32,
-      });
-
-      expect(initResult.session_init.used_opk).toBe(true);
-      expect(initResult.session_init.opk_id).toBe("opk-12345");
-    });
-
-    it("should not include opk_id when OPK is not used", () => {
-      const recipient_ik = generateX25519Keypair();
-      const recipient_spk = generateX25519Keypair();
-      const recipient_ik_sig = generateEd25519Keypair();
-
-      const bundle = createSignedBundle({
-        recipient_device_id: "bob-device-1",
-        recipient_ik,
-        recipient_spk,
-        recipient_ik_sig,
-        spk_id: 100,
-      });
-
-      const initiator_ik = generateX25519Keypair();
-
-      const initResult = x3dhInitiatorV1({
-        sender_device_id: "alice-device-1",
-        recipient_bundle: bundle,
-        initiator_ik_priv32: initiator_ik.priv32,
-      });
-
-      expect(initResult.session_init.used_opk).toBe(false);
-      expect(initResult.session_init.opk_id).toBeUndefined();
-    });
-
-    it("should require opk_id in bundle when opk_pub_b64 is present", () => {
-      const recipient_ik = generateX25519Keypair();
-      const recipient_spk = generateX25519Keypair();
-      const recipient_opk = generateX25519Keypair();
-      const recipient_ik_sig = generateEd25519Keypair();
-
-      const bundle = createSignedBundle({
-        recipient_device_id: "bob-device-1",
-        recipient_ik,
-        recipient_spk,
-        recipient_ik_sig,
-        spk_id: 100,
-        opk: recipient_opk,
-        opk_id: 42,
-      });
-
-      // Remove opk_id after creating bundle
-      delete bundle.opk_id;
-
-      const initiator_ik = generateX25519Keypair();
-
-      expect(() =>
-        x3dhInitiatorV1({
-          sender_device_id: "alice-device-1",
-          recipient_bundle: bundle,
-          initiator_ik_priv32: initiator_ik.priv32,
-        })
-      ).toThrow("opk_id is required when opk_pub_b64 is provided");
-    });
-
-    it("should require opk_id in session_init when responder has used_opk=true", () => {
-      const session_init: X3DHSessionInitV1 = {
-        v: 1,
-        alg: "x3dh-x25519-hkdf-sha256+ed25519",
-        sender_device_id: "alice-device-1",
-        sender_ik_pub_b64: bytesToBase64(new Uint8Array(32)),
-        ek_pub_b64: bytesToBase64(new Uint8Array(32)),
-        recipient_device_id: "bob-device-1",
-        spk_id: 100,
-        used_opk: true,
-        // Missing opk_id
-      };
-
-      const recipient_ik = generateX25519Keypair();
-      const recipient_spk = generateX25519Keypair();
-      const recipient_opk = generateX25519Keypair();
-
-      expect(() =>
-        x3dhResponderV1({
-          session_init,
-          recipient_ik_priv32: recipient_ik.priv32,
-          recipient_spk_priv32: recipient_spk.priv32,
-          recipient_opk_priv32: recipient_opk.priv32,
-        })
-      ).toThrow(TypeError);
-      expect(() =>
-        x3dhResponderV1({
-          session_init,
-          recipient_ik_priv32: recipient_ik.priv32,
-          recipient_spk_priv32: recipient_spk.priv32,
-          recipient_opk_priv32: recipient_opk.priv32,
-        })
-      ).toThrow("opk_id is required in session_init when used_opk is true");
-    });
-  });
-
-  describe("determinism", () => {
-    it("should produce same rk32 with same inputs", () => {
-      const recipient_ik = generateX25519Keypair();
-      const recipient_spk = generateX25519Keypair();
-      const recipient_ik_sig = generateEd25519Keypair();
-      const initiator_ik = generateX25519Keypair();
-      const initiator_ek = generateX25519Keypair();
-
-      const bundle = createSignedBundle({
-        recipient_device_id: "bob-device-1",
-        recipient_ik,
-        recipient_spk,
-        recipient_ik_sig,
-        spk_id: 100,
-      });
-
-      const result1 = x3dhInitiatorV1({
-        sender_device_id: "alice-device-1",
-        recipient_bundle: bundle,
-        initiator_ik_priv32: initiator_ik.priv32,
-        initiator_ek_priv32: initiator_ek.priv32,
-      });
-
-      const result2 = x3dhInitiatorV1({
-        sender_device_id: "alice-device-1",
-        recipient_bundle: bundle,
-        initiator_ik_priv32: initiator_ik.priv32,
-        initiator_ek_priv32: initiator_ek.priv32,
-      });
-
-      expect(result2.rk32).toEqual(result1.rk32);
-    });
-  });
-
-  describe("tampering detection", () => {
-    it("should produce different rk32 if SPK is tampered", () => {
-      const recipient_ik = generateX25519Keypair();
-      const recipient_spk = generateX25519Keypair();
-      const recipient_ik_sig = generateEd25519Keypair();
-      const initiator_ik = generateX25519Keypair();
-
-      const bundle = createSignedBundle({
-        recipient_device_id: "bob-device-1",
-        recipient_ik,
-        recipient_spk,
-        recipient_ik_sig,
-        spk_id: 100,
-      });
-
-      // Tamper with SPK after signing
-      const tamperedSpk = new Uint8Array(recipient_spk.pub32);
-      if (tamperedSpk.length > 0) {
-        const lastIdx = tamperedSpk.length - 1;
-        const lastByte = tamperedSpk[lastIdx];
-        if (lastByte !== undefined) {
-          tamperedSpk[lastIdx] = lastByte ^ 1;
-        }
+  it.each([false, true])("SK = HKDF(salt 0^32, F || DH1 || DH2 || DH3 [|| DH4], 'moretag/x3dh/v2'), and differs without F (opk: %s)", (withOpk) => {
+    const a = alice();
+    const b = bob({ withOpk });
+    const init = initiate(a, b.bundle);
+    const ek = decodeStrictBase64("ek", init.session_init.ek_pub_b64);
+    const dhs = [
+      x25519SharedSecret(b.spk.priv32, a.ik.pub32),
+      x25519SharedSecret(b.ik.priv32, ek),
+      x25519SharedSecret(b.spk.priv32, ek),
+      ...(withOpk ? [x25519SharedSecret(b.opk.priv32, ek)] : []),
+    ];
+    const concat = (parts: Uint8Array[]) => {
+      const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+      let at = 0;
+      for (const p of parts) {
+        out.set(p, at);
+        at += p.length;
       }
-      bundle.spk_pub_b64 = bytesToBase64(tamperedSpk);
+      return out;
+    };
+    const info = new TextEncoder().encode("moretag/x3dh/v2");
+    const km = concat([new Uint8Array(32).fill(0xff), ...dhs]);
+    expect(km.length).toBe(withOpk ? 160 : 128);
+    expect(hkdfSha256(km, new Uint8Array(32), info, 32)).toEqual(init.sk32);
+    expect(hkdfSha256(concat(dhs), new Uint8Array(32), info, 32)).not.toEqual(init.sk32);
+  });
 
-      // Should fail signature verification
-      expect(() =>
-        x3dhInitiatorV1({
-          sender_device_id: "alice-device-1",
-          recipient_bundle: bundle,
-          initiator_ik_priv32: initiator_ik.priv32,
-        })
-      ).toThrow("Invalid spk_sig_b64: signature verification failed");
+  it("the session_init carries both identity keys, the EK and the prekey ids", () => {
+    const a = alice();
+    const withOpk = initiate(a, bob({ withOpk: true }).bundle).session_init;
+    expect(withOpk).toMatchObject({
+      v: 2,
+      alg: X3DH_ALG_V2,
+      sender_device_id: ALICE_DEVICE,
+      recipient_device_id: BOB_DEVICE,
+      sender_ik_pub_b64: bytesToBase64(a.ik.pub32),
+      sender_ik_sig_pub_b64: bytesToBase64(a.ikSig.pub32),
+      spk_id: 7,
+      used_opk: true,
+      opk_id: 300,
     });
+    const noOpk = initiate(a, bob().bundle).session_init;
+    expect(noOpk.used_opk).toBe(false);
+    expect(noOpk).not.toHaveProperty("opk_id");
+  });
+
+  it("a fresh EK per setup", () => {
+    const a = alice();
+    const b = bob();
+    expect(initiate(a, b.bundle).session_init.ek_pub_b64).not.toBe(initiate(a, b.bundle).session_init.ek_pub_b64);
+  });
+
+  it("a missing initiator Ed25519 key is refused on both sides", () => {
+    const a = alice();
+    const b = bob();
+    expect(() =>
+      x3dhInitiatorV2({
+        sender_device_id: ALICE_DEVICE,
+        recipient_bundle: b.bundle,
+        expected_recipient_device_id: BOB_DEVICE,
+        initiator_ik_priv32: a.ik.priv32,
+        initiator_ik_sig_pub32: undefined as never,
+      })
+    ).toThrow(TypeError);
+    const { sender_ik_sig_pub_b64: _dropped, ...noSig } = initiate(a, b.bundle).session_init;
+    const err = thrownBy(() => respond(b, noSig as X3DHSessionInitV2));
+    expect((err as InvalidWireError).code).toBe("invalid_session_init");
+  });
+
+  it("opk_id without used_opk, and used_opk without opk_id, are refused", () => {
+    const a = alice();
+    const b = bob({ withOpk: true });
+    const si = initiate(a, b.bundle).session_init;
+    for (const bad of [{ ...si, used_opk: false }, { ...si, opk_id: undefined }]) {
+      expect((thrownBy(() => respond(b, bad as X3DHSessionInitV2, true)) as InvalidWireError).code).toBe(
+        "invalid_session_init"
+      );
+    }
+  });
+
+  it("session_init ids, keys and version are checked", () => {
+    const a = alice();
+    const b = bob();
+    const si = initiate(a, b.bundle).session_init;
+    const rows: Array<[unknown, string]> = [
+      [{ ...si, v: 1 }, "invalid_session_init"],
+      [{ ...si, alg: "x" }, "invalid_session_init"],
+      [{ ...si, spk_id: 0 }, "invalid_session_init"],
+      [{ ...si, spk_id: 2 ** 31 }, "invalid_session_init"],
+      [{ ...si, spk_id: "7" }, "invalid_session_init"],
+      [{ ...si, ek_pub_b64: bytesToBase64(new Uint8Array(31)) }, "invalid_session_init"],
+      [{ ...si, sender_ik_pub_b64: "AAAA" }, "invalid_session_init"],
+      [{ ...si, sender_device_id: ALICE_DEVICE.toUpperCase() }, "invalid_device_id"],
+    ];
+    for (const [bad, code] of rows) {
+      expect((thrownBy(() => respond(b, bad as X3DHSessionInitV2)) as InvalidWireError).code).toBe(code);
+    }
+  });
+
+  it("a sidecar naming another sender than the row, or another recipient, is device_mismatch", () => {
+    const a = alice();
+    const b = bob();
+    const si = initiate(a, b.bundle).session_init;
+    expect(thrownBy(() => respond(b, { ...si, sender_device_id: CAROL_DEVICE }))).toBeInstanceOf(DeviceMismatchError);
+    expect(thrownBy(() => respond(b, { ...si, recipient_device_id: CAROL_DEVICE }))).toBeInstanceOf(DeviceMismatchError);
+  });
+
+  it("equal device ids are self_session", () => {
+    const a = alice();
+    const b = bob();
+    const si = initiate(a, b.bundle).session_init;
+    expect(
+      thrownBy(() =>
+        x3dhResponderV2({
+          session_init: { ...si, sender_device_id: BOB_DEVICE },
+          sender_device_id: BOB_DEVICE,
+          recipient_device_id: BOB_DEVICE,
+          recipient_ik_priv32: b.ik.priv32,
+          recipient_ik_sig_pub32: b.ikSig.pub32,
+          recipient_spk_priv32: b.spk.priv32,
+        })
+      )
+    ).toBeInstanceOf(SelfSessionError);
+    const self = bob({ deviceId: ALICE_DEVICE });
+    expect(thrownBy(() => initiate(a, self.bundle, ALICE_DEVICE))).toBeInstanceOf(SelfSessionError);
+  });
+
+  it("a low-order EK is refused with low_order_key", () => {
+    const a = alice();
+    const b = bob();
+    const si = initiate(a, b.bundle).session_init;
+    for (const u of [new Uint8Array(32), Uint8Array.from({ length: 32 }, (_, i) => (i === 0 ? 1 : 0))]) {
+      const err = thrownBy(() => respond(b, { ...si, ek_pub_b64: bytesToBase64(u) }));
+      expect(err).toBeInstanceOf(LowOrderKeyError);
+      expect((err as LowOrderKeyError).code).toBe("low_order_key");
+    }
+  });
+});
+
+describe("bundle verification (initiator order: signature, then device)", () => {
+  it("a bundle naming another device is device_mismatch", () => {
+    const err = thrownBy(() => initiate(alice(), bob({ deviceId: CAROL_DEVICE }).bundle));
+    expect(err).toBeInstanceOf(DeviceMismatchError);
+  });
+
+  it("a replaced SPK, a wrong signer or a changed spk_id is bad_signature", () => {
+    const b = bob();
+    const other = generateEd25519Keypair();
+    const bad: X3DHPrekeyBundleV2[] = [
+      { ...b.bundle, spk_pub_b64: bytesToBase64(generateX25519Keypair().pub32) },
+      { ...b.bundle, ik_sig_pub_b64: bytesToBase64(other.pub32) },
+      { ...b.bundle, spk_id: 8 },
+      { ...b.bundle, ik_pub_b64: bytesToBase64(generateX25519Keypair().pub32) },
+    ];
+    for (const bundle of bad) {
+      const err = thrownBy(() => initiate(alice(), bundle));
+      expect(err).toBeInstanceOf(BadSignatureError);
+      expect((err as BadSignatureError).code).toBe("bad_signature");
+    }
+  });
+
+  it("a badly signed bundle for another device is bad_signature, not device_mismatch", () => {
+    const b = bob({ deviceId: CAROL_DEVICE });
+    const bundle = { ...b.bundle, spk_pub_b64: bytesToBase64(generateX25519Keypair().pub32) };
+    expect(thrownBy(() => verifyPrekeyBundleV2(bundle, BOB_DEVICE))).toBeInstanceOf(BadSignatureError);
+  });
+
+  it("shape: version, algorithm, ids, lengths, the one-time prekey pair and canonical device ids", () => {
+    const b = bob({ withOpk: true });
+    const { alg: _alg, ...noAlg } = b.bundle;
+    const rows: Array<[unknown, string]> = [
+      [{ ...b.bundle, v: 1 }, "invalid_bundle"],
+      [{ ...b.bundle, alg: "x3dh-x25519-hkdf-sha256" }, "invalid_bundle"],
+      [{ ...b.bundle, alg: "" }, "invalid_bundle"],
+      [noAlg, "invalid_bundle"],
+      [{ ...b.bundle, spk_id: 1.5 }, "invalid_bundle"],
+      [{ ...b.bundle, spk_sig_b64: bytesToBase64(new Uint8Array(63)) }, "invalid_bundle"],
+      [{ ...b.bundle, opk_id: undefined }, "invalid_bundle"],
+      [{ ...b.bundle, opk_pub_b64: undefined }, "invalid_bundle"],
+      [{ ...b.bundle, opk_id: 0 }, "invalid_bundle"],
+      [{ ...b.bundle, recipient_device_id: "device-123" }, "invalid_device_id"],
+    ];
+    for (const [bad, code] of rows) {
+      expect((thrownBy(() => verifyPrekeyBundleV2(bad as X3DHPrekeyBundleV2, BOB_DEVICE)) as InvalidWireError).code).toBe(code);
+    }
+    expect(thrownBy(() => verifyPrekeyBundleV2(b.bundle, "bob"))).toBeInstanceOf(InvalidDeviceIdError);
+  });
+});
+
+describe("signing messages", () => {
+  it("the SPK message is CBOR [domain, device_id, IK, SPK, spk_id]", () => {
+    const msg = buildSpkSigMessage({
+      recipient_device_id: BOB_DEVICE,
+      ik_pub32: new Uint8Array(32).fill(1),
+      spk_pub32: new Uint8Array(32).fill(2),
+      spk_id: 300,
+    });
+    expect(Buffer.from(msg).toString("hex")).toBe(
+      "85" +
+        "73" + Buffer.from("moretag/x3dh/spk/v1").toString("hex") +
+        "7824" + Buffer.from(BOB_DEVICE).toString("hex") +
+        "5820" + "01".repeat(32) +
+        "5820" + "02".repeat(32) +
+        "19012c"
+    );
+  });
+
+  it("the batch message is CBOR [domain, device_id, [[id, key], ...]] in the order given", () => {
+    const msg = buildOpkBatchSigMessage({
+      device_id: BOB_DEVICE,
+      prekeys: [
+        { opk_id: 2, pub32: new Uint8Array(32).fill(2) },
+        { opk_id: 1, pub32: new Uint8Array(32).fill(1) },
+      ],
+    });
+    expect(Buffer.from(msg).toString("hex")).toBe(
+      "83" +
+        "7819" + Buffer.from("moretag/x3dh/opk-batch/v1").toString("hex") +
+        "7824" + Buffer.from(BOB_DEVICE).toString("hex") +
+        "82" + "82" + "02" + "5820" + "02".repeat(32) + "82" + "01" + "5820" + "01".repeat(32)
+    );
+  });
+
+  it("the batch message refuses duplicate or out-of-range ids and non-canonical device ids", () => {
+    const key = new Uint8Array(32);
+    for (const prekeys of [
+      [{ opk_id: 1, pub32: key }, { opk_id: 1, pub32: key }],
+      [{ opk_id: 0, pub32: key }],
+      [{ opk_id: 2 ** 31, pub32: key }],
+      [{ opk_id: 1, pub32: new Uint8Array(31) }],
+    ]) {
+      expect(() => buildOpkBatchSigMessage({ device_id: BOB_DEVICE, prekeys })).toThrow(TypeError);
+    }
+    expect(() => buildOpkBatchSigMessage({ device_id: "bob", prekeys: [] })).toThrow(InvalidDeviceIdError);
   });
 });

@@ -1,87 +1,62 @@
-import { Encoder } from "cbor-x";
-import type { HeaderProtoV1, ArchiveHeaderV1 } from "../wire/header.js";
-
 /**
- * Global encoder instance for CBOR encoding.
- * - mapsAsObjects: false (we don't use Maps)
- * - useRecords: false (standard objects)
+ * The per-message AAD (protocol v2): AD || H, the Double Ratchet's
+ * CONCAT(AD, header) (DR §3.1, §3.4).
+ *
+ * H is one shortest-form CBOR array built from the header's decoded bytes:
+ *
+ *   H = [2, "xchacha20poly1305", nonce (bstr 24), dev_sender (bstr 16),
+ *        dev_recipient (bstr 16), dh_pub (bstr 32), pn (uint), n (uint), grp]
+ *   grp = null | [gid (bstr 16), epoch (uint)]
+ *
+ * Only these fields enter it, so no extra key of the JSON header (such as a
+ * session_init sidecar) can. AD has a fixed length, so the concatenation needs no
+ * length prefix.
  */
-const encoder = new Encoder({
-  mapsAsObjects: false,
-  useRecords: false,
-});
 
-const ENC = new TextEncoder();
+import { encodeCbor } from "../encoding/cbor.js";
+import { decodeHeaderV2, type DecodedHeaderV2, type HeaderProtoV2 } from "../wire/header.js";
+import { parseAssociatedDataV2 } from "./ad.js";
+import { deviceIdToBytes } from "./device-id.js";
 
-function compareCanonicalKeys(a: string, b: string): number {
-  const aBytes = ENC.encode(a);
-  const bBytes = ENC.encode(b);
-
-  if (aBytes.length !== bBytes.length) {
-    return aBytes.length - bBytes.length;
-  }
-
-  const len = Math.min(aBytes.length, bBytes.length);
-  for (let i = 0; i < len; i++) {
-    const diff = (aBytes[i] ?? 0) - (bBytes[i] ?? 0);
-    if (diff !== 0) return diff;
-  }
-  return 0;
+/** H for an already decoded header. */
+export function encodeDecodedHeaderV2(h: DecodedHeaderV2): Uint8Array {
+  return encodeCbor([
+    2,
+    "xchacha20poly1305",
+    h.nonce24,
+    deviceIdToBytes(h.sender_device_id),
+    deviceIdToBytes(h.recipient_device_id),
+    h.dh_pub32,
+    h.pn,
+    h.n,
+    h.grp === null ? null : [deviceIdToBytes(h.grp.gid), h.grp.epoch],
+  ]);
 }
 
-/**
- * Recursively canonicalizes an object by sorting keys using CBOR canonical order
- * (shorter UTF-8 first, then bytewise lexicographic).
- * Only sorts keys for plain objects (Object.prototype or null prototype).
- * Non-plain objects (Uint8Array, Date, class instances) are preserved as-is.
- * Arrays and primitives are preserved (arrays have their elements canonicalized).
- * This ensures deterministic encoding regardless of key insertion order.
- */
-function canonicalize(x: unknown): unknown {
-  if (x === null || x === undefined) {
-    return x;
-  }
-
-  if (Array.isArray(x)) {
-    return x.map(canonicalize);
-  }
-
-  if (typeof x === "object") {
-    // Preserve non-plain objects (Uint8Array, Date, class instances, etc.)
-    const proto = Object.getPrototypeOf(x);
-    if (proto !== Object.prototype && proto !== null) {
-      return x;
-    }
-
-    // Plain object: sort keys lexicographically
-    const obj = x as Record<string, unknown>;
-    const out: Record<string, unknown> = {};
-    const sortedKeys = Object.keys(obj).sort(compareCanonicalKeys);
-    for (const k of sortedKeys) {
-      out[k] = canonicalize(obj[k]);
-    }
-    return out;
-  }
-
-  // Primitives (string, number, boolean, etc.)
-  return x;
+/** H for a wire header; the header is checked first (see decodeHeaderV2). */
+export function encodeHeaderV2(header: HeaderProtoV2): Uint8Array {
+  return encodeDecodedHeaderV2(decodeHeaderV2(header));
 }
 
-/**
- * Encodes the header (protocol or archive) into a deterministic/canonical byte sequence.
- * This byte sequence is used as AAD (Additional Authenticated Data) for encryption.
- *
- * AAD is authenticated but not encrypted.
- * We include the entire header structure exactly as provided.
- *
- * The canonicalization ensures deterministic encoding by:
- * - Sorting all object keys lexicographically
- * - Preserving array order
- * - Recursively applying canonicalization to nested structures
- */
-export function encodeAADFromHeaderV1(
-  header: HeaderProtoV1 | ArchiveHeaderV1
-): Uint8Array {
-  const canonical = canonicalize(header);
-  return encoder.encode(canonical);
+/** Throws TypeError unless `ad` is a well-formed 164-byte AD. */
+export function assertAssociatedDataV2(ad: Uint8Array): void {
+  parseAssociatedDataV2(ad);
+}
+
+function concat(a: Uint8Array, b: Uint8Array): Uint8Array {
+  const out = new Uint8Array(a.byteLength + b.byteLength);
+  out.set(a, 0);
+  out.set(b, a.byteLength);
+  return out;
+}
+
+/** AD || H for a decoded header; AD is checked. */
+export function buildDeliveryAadFromDecodedV2(ad: Uint8Array, h: DecodedHeaderV2): Uint8Array {
+  assertAssociatedDataV2(ad);
+  return concat(ad, encodeDecodedHeaderV2(h));
+}
+
+/** The AAD of one message: AD || H. Both are checked first. */
+export function buildDeliveryAadV2(ad: Uint8Array, header: HeaderProtoV2): Uint8Array {
+  return buildDeliveryAadFromDecodedV2(ad, decodeHeaderV2(header));
 }

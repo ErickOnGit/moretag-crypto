@@ -11,14 +11,17 @@ import {
 } from "fs";
 import { dirname, join } from "path";
 import type { PersistedSession, RatchetSessionStore } from "./session-store.js";
-import { cloneRatchetState } from "./session-store.js";
-import { SessionNotFoundError } from "../errors.js";
+import { SessionNotFoundError, StoreIoError } from "../errors.js";
 import { hmac } from "@noble/hashes/hmac.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToBase64, decodeStrictBase64 } from "../encoding/base64.js";
 import { assertBoundedString } from "../crypto/validation.js";
-import { MAX_SESSION_ID_BYTES, MAX_SKIPPED_KEYS } from "../crypto/limits.js";
-import { SKIPPED_KEY_ID } from "./skipped-id.js";
+import { MAX_SESSION_ID_BYTES } from "../crypto/limits.js";
+import {
+  deserializePersistedSessionV2,
+  serializePersistedSessionV2,
+  type SerializedPersistedSessionV2,
+} from "./serialization.js";
 
 /** Current on-disk envelope format: MAC is bound to the session ID. */
 const ENVELOPE_VERSION = 2;
@@ -27,50 +30,40 @@ const SESSION_MAC_CONTEXT = "moretag-crypto/file-store/session/v2";
 /** Domain-separation prefix for rollback-counter MACs. */
 const COUNTER_MAC_CONTEXT = "moretag-crypto/file-store/counter/v2";
 
-export interface FileRatchetStoreOptions {
-  /**
-   * Also accept files in the 2.1.x format: session files whose MAC covers only the payload
-   * and is not bound to the session ID, and unsigned plain-number rollback counters. Meant for
-   * a one-time migration: load and re-save each session with this enabled, which rewrites both
-   * files in the current format, then turn it off. Default: false.
-   */
-  allowLegacyFormat?: boolean;
-}
-
 interface SessionEnvelope {
   v?: unknown;
   payload: unknown;
   mac_b64: string;
 }
 
-interface PersistedStateShape {
-  version: number;
-  state: {
-    version: 1;
-    rk32: number[];
-    ck_s32?: number[];
-    ck_r32?: number[];
-    ns: number;
-    nr: number;
-    pn: number;
-    dh_self: { priv32: number[]; pub32: number[] };
-    dh_remote_pub32: number[];
-    skipped: Array<[string, number[]]>;
-  };
+/**
+ * Runs file-system calls and turns any failure into {@link StoreIoError}: Node's
+ * messages hold the path, and so the session id. Only fs calls go through here,
+ * never the library's own checks or a transact callback.
+ */
+function io<T>(fn: () => T): T {
+  try {
+    return fn();
+  } catch (err) {
+    const fsCode = (err as { code?: unknown } | null)?.code;
+    throw new StoreIoError(typeof fsCode === "string" ? fsCode : undefined);
+  }
 }
 
 function atomicWrite(filePath: string, data: string): void {
   const dir = dirname(filePath);
-  mkdirSync(dir, { recursive: true });
   const tmp = join(dir, `.tmp-${Date.now()}-${Math.random().toString(16).slice(2)}`);
-  const fd = openSync(tmp, "wx", 0o600);
-  try {
-    writeFileSync(fd, data, { encoding: "utf-8" });
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
-  }
-  renameSync(tmp, filePath);
+  io(() => {
+    mkdirSync(dir, { recursive: true });
+    const fd = openSync(tmp, "wx", 0o600);
+    try {
+      writeFileSync(fd, data, { encoding: "utf-8" });
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    renameSync(tmp, filePath);
+  });
   // Best-effort directory fsync for durability.
   try {
     const dfd = openSync(dir, "r");
@@ -108,8 +101,7 @@ function isSessionEnvelope(v: unknown): v is SessionEnvelope {
 export class FileRatchetStore implements RatchetSessionStore {
   constructor(
     private baseDir: string,
-    private macKey32: Uint8Array,
-    private opts: FileRatchetStoreOptions = {}
+    private macKey32: Uint8Array
   ) {
     if (!(macKey32 instanceof Uint8Array) || macKey32.byteLength !== 32) {
       throw new TypeError("macKey32 must be a 32-byte Uint8Array");
@@ -131,15 +123,23 @@ export class FileRatchetStore implements RatchetSessionStore {
     return join(this.baseDir, `${sessionId}.lock`);
   }
 
+  /**
+   * Runs fn while holding `<sessionId>.lock`, created exclusively. A lock that is
+   * already there is {@link StoreIoError} with `fsCode` `EEXIST`: another process
+   * holds the session, or a crash inside load, save or transact left the lock
+   * behind. There is no wait and no age check; recovery is SPEC §14's.
+   */
   private withLock<T>(sessionId: string, fn: () => T): T {
     const lock = this.lockPath(sessionId);
-    mkdirSync(dirname(lock), { recursive: true });
-    const fd = openSync(lock, "wx", 0o600);
+    const fd = io(() => {
+      mkdirSync(dirname(lock), { recursive: true });
+      return openSync(lock, "wx", 0o600);
+    });
     try {
       return fn();
     } finally {
       try {
-        closeSync(fd);
+        io(() => closeSync(fd));
       } finally {
         try {
           unlinkSync(lock);
@@ -162,23 +162,12 @@ export class FileRatchetStore implements RatchetSessionStore {
     const p = this.versionPath(sessionId);
     if (!existsSync(p)) return undefined;
 
+    const text = io(() => readFileSync(p, "utf-8"));
     let parsed: unknown;
     try {
-      parsed = JSON.parse(readFileSync(p, "utf-8"));
+      parsed = JSON.parse(text);
     } catch {
       throw new Error("Invalid rollback counter file");
-    }
-
-    if (typeof parsed === "number") {
-      // 2.1.x wrote the counter as a bare, unsigned number.
-      if (!this.opts.allowLegacyFormat) {
-        throw new Error(
-          "Legacy rollback counter format (unsigned); " +
-            "construct the store with { allowLegacyFormat: true } once to migrate it"
-        );
-      }
-      if (!Number.isInteger(parsed) || parsed < 0) throw new Error("Invalid rollback counter file");
-      return parsed;
     }
 
     if (
@@ -217,80 +206,6 @@ export class FileRatchetStore implements RatchetSessionStore {
     );
   }
 
-  private encodeRecord(record: PersistedSession): { version: number; state: any } {
-    return {
-      version: record.version,
-      state: {
-        version: record.state.version,
-        rk32: Array.from(record.state.rk32),
-        ck_s32: record.state.ck_s32 ? Array.from(record.state.ck_s32) : undefined,
-        ck_r32: record.state.ck_r32 ? Array.from(record.state.ck_r32) : undefined,
-        ns: record.state.ns,
-        nr: record.state.nr,
-        pn: record.state.pn,
-        dh_self: {
-          priv32: Array.from(record.state.dh_self.priv32),
-          pub32: Array.from(record.state.dh_self.pub32),
-        },
-        dh_remote_pub32: Array.from(record.state.dh_remote_pub32),
-        skipped: Array.from(record.state.skipped.entries()).map(([k, v]) => [
-          k,
-          Array.from(v),
-        ]),
-      },
-    };
-  }
-
-  private validatePersistedStateShape(parsed: unknown): asserts parsed is PersistedStateShape {
-    const fail = (field: string): never => {
-      throw new Error(`Corrupt session state: ${field}`);
-    };
-    const isPlainObject = (v: unknown): v is Record<string, unknown> =>
-      typeof v === "object" && v !== null && !Array.isArray(v);
-    const isNonNegativeInteger = (v: unknown): v is number =>
-      typeof v === "number" && Number.isInteger(v) && v >= 0;
-    const isSerializedByteArray32 = (v: unknown): v is number[] =>
-      Array.isArray(v) &&
-      v.length === 32 &&
-      v.every((n) => typeof n === "number" && Number.isInteger(n) && n >= 0 && n <= 255);
-
-    if (!isPlainObject(parsed)) fail("root");
-    const root = parsed as Record<string, unknown>;
-    if (!isNonNegativeInteger(root.version)) fail("version");
-    if (!isPlainObject(root.state)) fail("state");
-
-    const state = root.state as Record<string, unknown>;
-    if (state.version !== 1) fail("state.version");
-    if (!isSerializedByteArray32(state.rk32)) fail("state.rk32");
-    if (state.ck_s32 !== undefined && !isSerializedByteArray32(state.ck_s32)) fail("state.ck_s32");
-    if (state.ck_r32 !== undefined && !isSerializedByteArray32(state.ck_r32)) fail("state.ck_r32");
-    if (!isNonNegativeInteger(state.ns)) fail("state.ns");
-    if (!isNonNegativeInteger(state.nr)) fail("state.nr");
-    if (!isNonNegativeInteger(state.pn)) fail("state.pn");
-
-    if (!isPlainObject(state.dh_self)) fail("state.dh_self");
-    const dhSelf = state.dh_self as Record<string, unknown>;
-    if (!isSerializedByteArray32(dhSelf.priv32)) fail("state.dh_self.priv32");
-    if (!isSerializedByteArray32(dhSelf.pub32)) fail("state.dh_self.pub32");
-    if (!isSerializedByteArray32(state.dh_remote_pub32)) fail("state.dh_remote_pub32");
-
-    if (!Array.isArray(state.skipped)) fail("state.skipped");
-    const skipped = state.skipped as unknown[];
-    // The ratchet never holds more than MAX_SKIPPED_KEYS, so a larger list wasn't written by it.
-    if (skipped.length > MAX_SKIPPED_KEYS) fail("state.skipped (too many entries)");
-    const seen = new Set<string>();
-    for (let i = 0; i < skipped.length; i++) {
-      const entry = skipped[i];
-      if (!Array.isArray(entry) || entry.length !== 2) fail(`state.skipped[${i}]`);
-      const [key, value] = entry as [unknown, unknown];
-      if (typeof key !== "string" || !SKIPPED_KEY_ID.test(key)) fail(`state.skipped[${i}][0]`);
-      // Duplicates would be silently collapsed by the Map on load.
-      if (seen.has(key as string)) fail(`state.skipped[${i}][0] (duplicate)`);
-      seen.add(key as string);
-      if (!isSerializedByteArray32(value)) fail(`state.skipped[${i}][1]`);
-    }
-  }
-
   /**
    * MAC input for a session file. Binding the session ID means a validly signed file for one
    * session cannot be copied over another session's file. Session IDs never contain NUL
@@ -322,60 +237,36 @@ export class FileRatchetStore implements RatchetSessionStore {
     const file = this.pathFor(sessionId);
     if (!existsSync(file)) return undefined;
 
-    const data = readFileSync(file, "utf-8");
-    const parsed: unknown = JSON.parse(data);
+    const data = io(() => readFileSync(file, "utf-8"));
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(data);
+    } catch {
+      // JSON.parse's own message quotes the file's contents.
+      throw new Error("Invalid session file: not JSON");
+    }
 
     if (!isSessionEnvelope(parsed)) {
       throw new Error("Invalid session file: missing mac_b64");
     }
-
-    const payloadJson = JSON.stringify(parsed.payload);
-    if (parsed.v === ENVELOPE_VERSION) {
-      this.verifyMac("mac_b64", parsed.mac_b64, this.sessionMacInput(sessionId, payloadJson));
-    } else if (parsed.v === undefined) {
-      if (!this.opts.allowLegacyFormat) {
-        throw new Error(
-          "Legacy session file format (MAC not bound to session ID); " +
-            "construct the store with { allowLegacyFormat: true } once to migrate it"
-        );
-      }
-      this.verifyMac("mac_b64", parsed.mac_b64, new TextEncoder().encode(payloadJson));
-    } else {
+    if (parsed.v !== ENVELOPE_VERSION) {
       throw new Error("Invalid session file: unsupported envelope version");
     }
-    this.validatePersistedStateShape(parsed.payload);
-    const payload = parsed.payload;
+    const payloadJson = JSON.stringify(parsed.payload);
+    this.verifyMac("mac_b64", parsed.mac_b64, this.sessionMacInput(sessionId, payloadJson));
+    // The payload is the public serialized form; its deserializer checks every field.
+    const record = deserializePersistedSessionV2(parsed.payload as SerializedPersistedSessionV2);
 
     const counter = this.readCounter(sessionId);
-    if (counter === undefined && parsed.v === ENVELOPE_VERSION) {
+    if (counter === undefined) {
       // saveUnlocked always leaves a counter behind once a session file exists, so a missing
       // one means it was deleted — which would otherwise switch off rollback detection.
       throw new Error("Rollback counter missing for session");
     }
-    if (counter !== undefined && payload.version < counter) {
+    if (record.version < counter) {
       throw new Error("Rollback detected: session version behind persisted counter");
     }
-
-    return {
-      version: payload.version,
-      state: cloneRatchetState({
-        version: payload.state.version,
-        rk32: Uint8Array.from(payload.state.rk32),
-        ck_s32: payload.state.ck_s32 ? Uint8Array.from(payload.state.ck_s32) : undefined,
-        ck_r32: payload.state.ck_r32 ? Uint8Array.from(payload.state.ck_r32) : undefined,
-        ns: payload.state.ns,
-        nr: payload.state.nr,
-        pn: payload.state.pn,
-        dh_self: {
-          priv32: Uint8Array.from(payload.state.dh_self.priv32),
-          pub32: Uint8Array.from(payload.state.dh_self.pub32),
-        },
-        dh_remote_pub32: Uint8Array.from(payload.state.dh_remote_pub32),
-        skipped: new Map(
-          payload.state.skipped.map(([k, v]) => [k, Uint8Array.from(v)] as const)
-        ),
-      }),
-    };
+    return record;
   }
 
   load(sessionId: string): PersistedSession | undefined {
@@ -389,7 +280,7 @@ export class FileRatchetStore implements RatchetSessionStore {
       throw new Error("Refusing to save stale session version (possible rollback)");
     }
 
-    const payloadObj = this.encodeRecord(record);
+    const payloadObj = serializePersistedSessionV2(record);
     const payloadJson = JSON.stringify(payloadObj);
 
     const toWrite = JSON.stringify({

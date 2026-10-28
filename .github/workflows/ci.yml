@@ -25,6 +25,7 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run typecheck:tests
+      - run: npm run vectors:check
       - run: npm test
       - run: npm run build
       - run: npm pack --dry-run

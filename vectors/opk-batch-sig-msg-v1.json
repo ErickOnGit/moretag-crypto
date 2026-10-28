@@ -1,0 +1,35 @@
+{
+  "about": "Golden bytes of the one-time prekey batch signature (design.md §4.1 step 4, decision 1): Ed25519 by the identity signing key over CBOR [\"moretag/x3dh/opk-batch/v1\", device_id, [[opk_id, key (bstr 32)], ...]] in the order listed, device_id a canonical UUID text string, ids unsigned integers 1..2^31-1, shortest form. Written by moretag-crypto 3.0.0 (buildOpkBatchSigMessage); src/vectors/signature-messages.test.ts checks the message against the independent generator's CBOR encoder and the signature against node:crypto. The server's _shared/opkBatchSigMessage.ts and the app's copy must reproduce message_cbor_hex and verify signature_hex. Keys are SHA-256(\"moretag-crypto/vectors/opk-batch/v1/key/\" || id); the signer is party bob of x3dh-v2.json.",
+  "domain": "moretag/x3dh/opk-batch/v1",
+  "device_id": "f783790d-773a-42fd-88a1-1834034f4933",
+  "ik_sig_seed_hex": "bf61b188f70cbe91c87294e294ba8b5f7f3b471fb3449db6d06fe6f346294400",
+  "ik_sig_public_hex": "894a2c67309d2866a69d32d1f8550f41e5b9802d4c83931fc4b210472f3ee324",
+  "prekeys": [
+    {
+      "opk_id": 1,
+      "pub_hex": "64c3907b48523e28a001b92128ed0ecfe88c82895900efc9c67df0ae43d1a728"
+    },
+    {
+      "opk_id": 23,
+      "pub_hex": "e6174646b95595174145d57b50bf03491f41c6cf6f56454deeded7995448f905"
+    },
+    {
+      "opk_id": 24,
+      "pub_hex": "b5a8c761432d0d2858af946cb90f99fe20e0f38f6522de72c022b031ae4d49cd"
+    },
+    {
+      "opk_id": 300,
+      "pub_hex": "563dbd0b9af691c6175acd892ce0f5ab5d55c3e2e4a4c414e52a072118038e10"
+    },
+    {
+      "opk_id": 65536,
+      "pub_hex": "e7f5d4de9929c046b4de628e2684caa8824879c9d6b07f38e1a9f54a2baeb9b1"
+    },
+    {
+      "opk_id": 2147483647,
+      "pub_hex": "c4147c826ad25e3c7a1ce8c7e24d3fea2d3cba0b71be0f4a73f1f381a620c0ec"
+    }
+  ],
+  "message_cbor_hex": "8378196d6f72657461672f783364682f6f706b2d62617463682f7631782466373833373930642d373733612d343266642d383861312d313833343033346634393333868201582064c3907b48523e28a001b92128ed0ecfe88c82895900efc9c67df0ae43d1a72882175820e6174646b95595174145d57b50bf03491f41c6cf6f56454deeded7995448f9058218185820b5a8c761432d0d2858af946cb90f99fe20e0f38f6522de72c022b031ae4d49cd8219012c5820563dbd0b9af691c6175acd892ce0f5ab5d55c3e2e4a4c414e52a072118038e10821a000100005820e7f5d4de9929c046b4de628e2684caa8824879c9d6b07f38e1a9f54a2baeb9b1821a7fffffff5820c4147c826ad25e3c7a1ce8c7e24d3fea2d3cba0b71be0f4a73f1f381a620c0ec",
+  "signature_hex": "58766e68ee097199cb0535635152b7ea14792437a17d82f8bc05fa5246c36541c061b8f2793931f9aec506f4e0d874d07cec8ee71182a13c2a58e90bbadff804"
+}

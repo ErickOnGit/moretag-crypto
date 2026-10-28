@@ -1,116 +1,125 @@
 /**
- * High-level seal/open primitives for v1 E2EE protocol.
- * Combines AAD encoding, AEAD encryption, and base64 encoding.
+ * High-level seal/open primitives (protocol v2): message delivery under AD || H,
+ * local seals under a caller key and AAD, and attachments.
  */
 
-import type { HeaderProtoV1, ArchiveHeaderV1 } from "../wire/header.js";
-import { encodeAADFromHeaderV1 } from "./aad.js";
+import type { HeaderProtoV2 } from "../wire/header.js";
+import { decodeCiphertextV2, decodeHeaderV2 } from "../wire/header.js";
+import { buildDeliveryAadFromDecodedV2 } from "./aad.js";
 import {
   aeadEncryptXChaCha20Poly1305,
   aeadDecryptXChaCha20Poly1305,
   randomKey32,
   randomNonce24,
 } from "./aead.js";
-import {
-  decodeNonceFromHeaderV1,
-  decodeDhPubFromHeaderV1,
-} from "./header-utils.js";
+import { assertCanonicalDeviceId } from "./device-id.js";
+import { encodeCbor } from "../encoding/cbor.js";
 import { bytesToBase64, decodeStrictBase64 } from "../encoding/base64.js";
+import { MAX_PLAINTEXT_BYTES, MAX_CIPHERTEXT_BYTES } from "./limits.js";
 
 /** Attachments carry no header, so they are sealed with empty AAD. */
 const EMPTY_AAD = new Uint8Array(0);
-import { MAX_PLAINTEXT_BYTES, MAX_CIPHERTEXT_BYTES } from "./limits.js";
 
-/**
- * Seals (encrypts) a delivery message using HeaderProtoV1.
- *
- * @param args.key32 - 32-byte encryption key
- * @param args.header - Protocol header (used as AAD)
- * @param args.plaintext - Data to encrypt
- * @returns Object containing base64-encoded ciphertext
- * @throws TypeError if header fields are invalid (nonce, dh_pub lengths or base64)
- */
-export function sealDeliveryV1(args: {
-  key32: Uint8Array;
-  header: HeaderProtoV1;
-  plaintext: Uint8Array;
-}): { ciphertext_b64: string } {
-  const { key32, header, plaintext } = args;
-
+function assertPlaintextSize(plaintext: Uint8Array): void {
   if (plaintext.byteLength > MAX_PLAINTEXT_BYTES) {
-    throw new TypeError(
-      `Plaintext too large: max ${MAX_PLAINTEXT_BYTES} bytes`
-    );
+    throw new TypeError(`Plaintext too large: max ${MAX_PLAINTEXT_BYTES} bytes`);
   }
+}
 
-  // Compute AAD from header
-  const aadBytes = encodeAADFromHeaderV1(header);
-
-  // Decode and validate nonce (24 bytes)
-  const nonce24 = decodeNonceFromHeaderV1(header);
-
-  // Decode and validate DH public key (32 bytes) - enforces crypto invariant
-  // even though we don't use it yet
-  decodeDhPubFromHeaderV1(header);
-
-  // Encrypt
-  const ciphertextBytes = aeadEncryptXChaCha20Poly1305(
-    key32,
-    nonce24,
-    plaintext,
-    aadBytes
-  );
-
-  return { ciphertext_b64: bytesToBase64(ciphertextBytes) };
+/** A local seal's ciphertext, which the host holds: a TypeError when malformed. */
+function decodeLocalCiphertext(ciphertext_b64: string): Uint8Array {
+  const bytes = decodeStrictBase64("ciphertext_b64", ciphertext_b64);
+  if (bytes.byteLength > MAX_CIPHERTEXT_BYTES) {
+    throw new TypeError(`Ciphertext too large: max ${MAX_CIPHERTEXT_BYTES} bytes`);
+  }
+  return bytes;
 }
 
 /**
- * Opens (decrypts) a delivery message using HeaderProtoV1.
+ * Seals one message under its message key with AAD = AD || H.
  *
- * @param args.key32 - 32-byte encryption key
- * @param args.header - Protocol header (used as AAD)
- * @param args.ciphertext_b64 - Base64-encoded ciphertext
- * @returns Decrypted plaintext
- * @throws TypeError if header fields or ciphertext_b64 are invalid
- * @throws DecryptFailedError if authentication fails (wrong key, tampered data)
+ * @param args.key32 - 32-byte message key
+ * @param args.ad - the session's 164-byte associated data
+ * @param args.header - the v2 header; its nonce is the AEAD nonce and H its AAD half
+ * @throws InvalidWireError / InvalidDeviceIdError for a malformed header, TypeError for a bad AD
  */
-export function openDeliveryV1(args: {
+export function sealDeliveryV2(args: {
   key32: Uint8Array;
-  header: HeaderProtoV1;
+  ad: Uint8Array;
+  header: HeaderProtoV2;
+  plaintext: Uint8Array;
+}): { ciphertext_b64: string } {
+  assertPlaintextSize(args.plaintext);
+  const h = decodeHeaderV2(args.header);
+  const aad = buildDeliveryAadFromDecodedV2(args.ad, h);
+  const ciphertext = aeadEncryptXChaCha20Poly1305(args.key32, h.nonce24, args.plaintext, aad);
+  return { ciphertext_b64: bytesToBase64(ciphertext) };
+}
+
+/**
+ * Opens one message sealed by {@link sealDeliveryV2}.
+ *
+ * @throws InvalidWireError `invalid_header` for a malformed header, or a
+ *   `ciphertext_b64` that is not strict base64 or is over MAX_CIPHERTEXT_BYTES
+ * @throws DecryptFailedError if authentication fails (wrong key, AD, header or ciphertext)
+ */
+export function openDeliveryV2(args: {
+  key32: Uint8Array;
+  ad: Uint8Array;
+  header: HeaderProtoV2;
   ciphertext_b64: string;
 }): Uint8Array {
-  const { key32, header, ciphertext_b64 } = args;
+  const h = decodeHeaderV2(args.header);
+  const aad = buildDeliveryAadFromDecodedV2(args.ad, h);
+  const ciphertext = decodeCiphertextV2(args.ciphertext_b64);
+  return aeadDecryptXChaCha20Poly1305(args.key32, h.nonce24, ciphertext, aad);
+}
 
-  // Compute AAD from header
-  const aadBytes = encodeAADFromHeaderV1(header);
+/**
+ * The AAD of a self seal: CBOR ["moretag/self/v1", device_id], the device id as a
+ * canonical UUID text string. A host that keeps its own copy of what it sent
+ * seals it with {@link sealLocalV2} under a device-local key and this AAD.
+ */
+export function buildSelfSealAadV2(device_id: string): Uint8Array {
+  assertCanonicalDeviceId(device_id);
+  return encodeCbor(["moretag/self/v1", device_id]);
+}
 
-  // Decode and validate nonce (24 bytes)
-  const nonce24 = decodeNonceFromHeaderV1(header);
+/**
+ * Seals data for this device only: XChaCha20-Poly1305 under a caller key, a fresh
+ * random 24-byte nonce (one draw) and caller AAD. No ratchet is involved.
+ */
+export function sealLocalV2(args: {
+  key32: Uint8Array;
+  aad: Uint8Array;
+  plaintext: Uint8Array;
+}): { nonce_b64: string; ciphertext_b64: string } {
+  assertPlaintextSize(args.plaintext);
+  const nonce24 = randomNonce24();
+  const ciphertext = aeadEncryptXChaCha20Poly1305(args.key32, nonce24, args.plaintext, args.aad);
+  return { nonce_b64: bytesToBase64(nonce24), ciphertext_b64: bytesToBase64(ciphertext) };
+}
 
-  // Decode and validate DH public key (32 bytes)
-  decodeDhPubFromHeaderV1(header);
-
-  // Decode ciphertext from base64
-  const ciphertextBytes = decodeStrictBase64("ciphertext_b64", ciphertext_b64);
-  if (ciphertextBytes.byteLength > MAX_CIPHERTEXT_BYTES) {
-    throw new TypeError(
-      `Ciphertext too large: max ${MAX_CIPHERTEXT_BYTES} bytes`
-    );
-  }
-
-  // Decrypt
-  return aeadDecryptXChaCha20Poly1305(
-    key32,
-    nonce24,
-    ciphertextBytes,
-    aadBytes
-  );
+/**
+ * Opens a {@link sealLocalV2} seal.
+ *
+ * @throws DecryptFailedError if authentication fails
+ */
+export function openLocalV2(args: {
+  key32: Uint8Array;
+  aad: Uint8Array;
+  nonce_b64: string;
+  ciphertext_b64: string;
+}): Uint8Array {
+  const nonce24 = decodeStrictBase64("nonce_b64", args.nonce_b64);
+  const ciphertext = decodeLocalCiphertext(args.ciphertext_b64);
+  return aeadDecryptXChaCha20Poly1305(args.key32, nonce24, ciphertext, args.aad);
 }
 
 /**
  * Seals (encrypts) an attachment blob with a standalone, single-use symmetric key.
  *
- * Unlike sealDeliveryV1, attachments are not bound to a ratchet header: the
+ * Unlike sealDeliveryV2, attachments are not bound to a ratchet header: the
  * returned key/nonce travel inside the (already E2EE) ratcheted message that
  * references the uploaded ciphertext, so no AAD is needed — the AEAD tag alone
  * authenticates the bytes. A fresh random key per attachment makes nonce reuse a
@@ -166,90 +175,5 @@ export function openAttachmentV1(args: {
     nonce24,
     args.ciphertext,
     EMPTY_AAD
-  );
-}
-
-/**
- * Seals (encrypts) an archive event using ArchiveHeaderV1.
- *
- * @param args.key32 - 32-byte encryption key
- * @param args.header - Archive header (used as AAD)
- * @param args.plaintext - Data to encrypt
- * @returns Object containing base64-encoded ciphertext
- * @throws TypeError if header fields are invalid (nonce, dh_pub lengths or base64)
- */
-export function sealArchiveV1(args: {
-  key32: Uint8Array;
-  header: ArchiveHeaderV1;
-  plaintext: Uint8Array;
-}): { ciphertext_b64: string } {
-  const { key32, header, plaintext } = args;
-
-  if (plaintext.byteLength > MAX_PLAINTEXT_BYTES) {
-    throw new TypeError(
-      `Plaintext too large: max ${MAX_PLAINTEXT_BYTES} bytes`
-    );
-  }
-
-  // Compute AAD from header
-  const aadBytes = encodeAADFromHeaderV1(header);
-
-  // Decode and validate nonce (24 bytes)
-  const nonce24 = decodeNonceFromHeaderV1(header);
-
-  // Decode and validate DH public key (32 bytes)
-  decodeDhPubFromHeaderV1(header);
-
-  // Encrypt
-  const ciphertextBytes = aeadEncryptXChaCha20Poly1305(
-    key32,
-    nonce24,
-    plaintext,
-    aadBytes
-  );
-
-  return { ciphertext_b64: bytesToBase64(ciphertextBytes) };
-}
-
-/**
- * Opens (decrypts) an archive event using ArchiveHeaderV1.
- *
- * @param args.key32 - 32-byte encryption key
- * @param args.header - Archive header (used as AAD)
- * @param args.ciphertext_b64 - Base64-encoded ciphertext
- * @returns Decrypted plaintext
- * @throws TypeError if header fields or ciphertext_b64 are invalid
- * @throws DecryptFailedError if authentication fails (wrong key, tampered data)
- */
-export function openArchiveV1(args: {
-  key32: Uint8Array;
-  header: ArchiveHeaderV1;
-  ciphertext_b64: string;
-}): Uint8Array {
-  const { key32, header, ciphertext_b64 } = args;
-
-  // Compute AAD from header
-  const aadBytes = encodeAADFromHeaderV1(header);
-
-  // Decode and validate nonce (24 bytes)
-  const nonce24 = decodeNonceFromHeaderV1(header);
-
-  // Decode and validate DH public key (32 bytes)
-  decodeDhPubFromHeaderV1(header);
-
-  // Decode ciphertext from base64
-  const ciphertextBytes = decodeStrictBase64("ciphertext_b64", ciphertext_b64);
-  if (ciphertextBytes.byteLength > MAX_CIPHERTEXT_BYTES) {
-    throw new TypeError(
-      `Ciphertext too large: max ${MAX_CIPHERTEXT_BYTES} bytes`
-    );
-  }
-
-  // Decrypt
-  return aeadDecryptXChaCha20Poly1305(
-    key32,
-    nonce24,
-    ciphertextBytes,
-    aadBytes
   );
 }

@@ -1,17 +1,17 @@
 import { describe, it, expect, vi } from "vitest";
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, copyFileSync, unlinkSync } from "fs";
+import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, copyFileSync, unlinkSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { FileRatchetStore } from "./file-store.js";
-import { ratchetInit, ratchetEncrypt, ratchetDecrypt } from "./ratchet.js";
+import { ratchetEncrypt, ratchetDecrypt } from "./ratchet.js";
 import { createPersistedSession } from "./session-store.js";
-import { generateX25519Keypair } from "../crypto/x25519.js";
 import { randomBytes } from "@noble/ciphers/utils.js";
+import { sessionPair } from "../test-fixtures.js";
 import { hmac } from "@noble/hashes/hmac.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToBase64 } from "../encoding/base64.js";
 import { MAX_SKIPPED_KEYS } from "../crypto/limits.js";
-import { ReplayDetectedError, SessionNotFoundError } from "../errors.js";
+import { ReplayDetectedError, SessionNotFoundError, StoreIoError } from "../errors.js";
 
 function encode(str: string): Uint8Array {
   return new TextEncoder().encode(str);
@@ -23,21 +23,8 @@ function macV2(key: Uint8Array, sessionId: string, payload: unknown): string {
   return bytesToBase64(hmac(sha256, key, input));
 }
 
-/** 2.1.x envelope: MAC over the payload only, no `v` field. */
-function legacyEnvelope(key: Uint8Array, payload: unknown): string {
-  const mac_b64 = bytesToBase64(hmac(sha256, key, encode(JSON.stringify(payload))));
-  return JSON.stringify({ payload, mac_b64 });
-}
-
 function newState() {
-  const aliceDh = generateX25519Keypair();
-  const bobDh = generateX25519Keypair();
-  return ratchetInit({
-    rk32: randomBytes(32),
-    selfDh: aliceDh,
-    remoteDhPub32: bobDh.pub32,
-    sendingFirst: true,
-  });
+  return sessionPair().alice;
 }
 
 describe("FileRatchetStore", () => {
@@ -60,22 +47,7 @@ describe("FileRatchetStore", () => {
     try {
       const store = new FileRatchetStore(dir, randomBytes(32));
 
-      const root = randomBytes(32);
-      const aliceDh = generateX25519Keypair();
-      const bobDh = generateX25519Keypair();
-
-      const aliceState = ratchetInit({
-        rk32: root,
-        selfDh: aliceDh,
-        remoteDhPub32: bobDh.pub32,
-        sendingFirst: true,
-      });
-      const bobState = ratchetInit({
-        rk32: root,
-        selfDh: bobDh,
-        remoteDhPub32: aliceDh.pub32,
-        sendingFirst: false,
-      });
+      const { alice: aliceState, bob: bobState } = sessionPair();
 
       store.save("alice->bob", createPersistedSession(aliceState));
       store.save("bob->alice", createPersistedSession(bobState));
@@ -83,8 +55,6 @@ describe("FileRatchetStore", () => {
       const { header, ciphertext_b64 } = ratchetEncrypt({
         state: aliceState,
         plaintext: encode("hi"),
-        sender_device_id: "alice",
-        recipient_device_id: "bob",
       });
       store.save("alice->bob", { version: 1, state: aliceState });
 
@@ -127,16 +97,7 @@ describe("FileRatchetStore", () => {
     const dir = mkdtempSync(join(tmpdir(), "ratchet-store-"));
     try {
       const store = new FileRatchetStore(dir, randomBytes(32));
-      const root = randomBytes(32);
-      const aliceDh = generateX25519Keypair();
-      const bobDh = generateX25519Keypair();
-
-      const state = ratchetInit({
-        rk32: root,
-        selfDh: aliceDh,
-        remoteDhPub32: bobDh.pub32,
-        sendingFirst: true,
-      });
+      const state = newState();
 
       // Save version 2
       store.save("sess", { version: 2, state: createPersistedSession(state).state });
@@ -156,16 +117,7 @@ describe("FileRatchetStore", () => {
       const macKey32 = randomBytes(32);
       const store = new FileRatchetStore(dir, macKey32);
 
-      const root = randomBytes(32);
-      const aliceDh = generateX25519Keypair();
-      const bobDh = generateX25519Keypair();
-
-      const state = ratchetInit({
-        rk32: root,
-        selfDh: aliceDh,
-        remoteDhPub32: bobDh.pub32,
-        sendingFirst: true,
-      });
+      const state = newState();
 
       store.save("sess", createPersistedSession(state));
 
@@ -186,16 +138,7 @@ describe("FileRatchetStore", () => {
     const dir = mkdtempSync(join(tmpdir(), "ratchet-store-"));
     try {
       const store = new FileRatchetStore(dir, randomBytes(32));
-      const root = randomBytes(32);
-      const aliceDh = generateX25519Keypair();
-      const bobDh = generateX25519Keypair();
-
-      const state = ratchetInit({
-        rk32: root,
-        selfDh: aliceDh,
-        remoteDhPub32: bobDh.pub32,
-        sendingFirst: true,
-      });
+      const state = newState();
 
       expect(() =>
         store.save("../escape", createPersistedSession(state))
@@ -213,26 +156,17 @@ describe("FileRatchetStore", () => {
     try {
       const macKey32 = randomBytes(32);
       const store = new FileRatchetStore(dir, macKey32);
-      const root = randomBytes(32);
-      const aliceDh = generateX25519Keypair();
-      const bobDh = generateX25519Keypair();
-
-      const state = ratchetInit({
-        rk32: root,
-        selfDh: aliceDh,
-        remoteDhPub32: bobDh.pub32,
-        sendingFirst: true,
-      });
+      const state = newState();
 
       store.save("sess", createPersistedSession(state));
       const p = join(dir, "sess.json");
       const raw = readFileSync(p, "utf-8");
       const parsed = JSON.parse(raw);
-      parsed.payload.state.rk32 = parsed.payload.state.rk32.slice(0, 31);
+      parsed.payload.state.rk32_b64 = bytesToBase64(randomBytes(31));
       parsed.mac_b64 = macV2(macKey32, "sess", parsed.payload);
       writeFileSync(p, JSON.stringify(parsed), "utf-8");
 
-      expect(() => store.load("sess")).toThrow(/Corrupt session state: state\.rk32/);
+      expect(() => store.load("sess")).toThrow(/^Corrupt session state: state\.rk32_b64$/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -254,7 +188,7 @@ describe("FileRatchetStore", () => {
     }
   });
 
-  it("rejects the 2.1.x envelope format by default", () => {
+  it("rejects a file without an envelope version (the 2.1.x format)", () => {
     const dir = mkdtempSync(join(tmpdir(), "ratchet-store-"));
     try {
       const macKey32 = randomBytes(32);
@@ -262,51 +196,10 @@ describe("FileRatchetStore", () => {
       store.save("sess", createPersistedSession(newState()));
       const p = join(dir, "sess.json");
       const { payload } = JSON.parse(readFileSync(p, "utf-8"));
-      writeFileSync(p, legacyEnvelope(macKey32, payload), "utf-8");
+      const mac_b64 = bytesToBase64(hmac(sha256, macKey32, encode(JSON.stringify(payload))));
+      writeFileSync(p, JSON.stringify({ payload, mac_b64 }), "utf-8");
 
-      expect(() => store.load("sess")).toThrow(/Legacy session file format/);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("migrates the 2.1.x envelope format when allowLegacyFormat is set", () => {
-    const dir = mkdtempSync(join(tmpdir(), "ratchet-store-"));
-    try {
-      const macKey32 = randomBytes(32);
-      const state = newState();
-      new FileRatchetStore(dir, macKey32).save("sess", createPersistedSession(state));
-      const p = join(dir, "sess.json");
-      const { payload } = JSON.parse(readFileSync(p, "utf-8"));
-      writeFileSync(p, legacyEnvelope(macKey32, payload), "utf-8");
-
-      const migrating = new FileRatchetStore(dir, macKey32, { allowLegacyFormat: true });
-      const loaded = migrating.load("sess")!;
-      expect(loaded.state.rk32).toEqual(state.rk32);
-      migrating.save("sess", loaded);
-
-      const rewritten = JSON.parse(readFileSync(p, "utf-8"));
-      expect(rewritten.v).toBe(2);
-      // After re-saving, a store without the legacy flag loads it.
-      expect(new FileRatchetStore(dir, macKey32).load("sess")!.state.rk32).toEqual(state.rk32);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("still rejects a tampered 2.1.x file when allowLegacyFormat is set", () => {
-    const dir = mkdtempSync(join(tmpdir(), "ratchet-store-"));
-    try {
-      const macKey32 = randomBytes(32);
-      const store = new FileRatchetStore(dir, macKey32, { allowLegacyFormat: true });
-      store.save("sess", createPersistedSession(newState()));
-      const p = join(dir, "sess.json");
-      const { payload } = JSON.parse(readFileSync(p, "utf-8"));
-      const envelope = JSON.parse(legacyEnvelope(macKey32, payload));
-      envelope.payload.state.ns = 99;
-      writeFileSync(p, JSON.stringify(envelope), "utf-8");
-
-      expect(() => store.load("sess")).toThrow(/MAC verification failed/);
+      expect(() => store.load("sess")).toThrow(/unsupported envelope version/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -315,7 +208,7 @@ describe("FileRatchetStore", () => {
   it("rejects unknown envelope versions", () => {
     const dir = mkdtempSync(join(tmpdir(), "ratchet-store-"));
     try {
-      const store = new FileRatchetStore(dir, randomBytes(32), { allowLegacyFormat: true });
+      const store = new FileRatchetStore(dir, randomBytes(32));
       store.save("sess", createPersistedSession(newState()));
       const p = join(dir, "sess.json");
       const envelope = JSON.parse(readFileSync(p, "utf-8"));
@@ -329,10 +222,10 @@ describe("FileRatchetStore", () => {
   });
 
   describe("rollback counter", () => {
-    function setup(opts?: { allowLegacyFormat?: boolean }) {
+    function setup() {
       const dir = mkdtempSync(join(tmpdir(), "ratchet-store-"));
       const macKey32 = randomBytes(32);
-      const store = new FileRatchetStore(dir, macKey32, opts);
+      const store = new FileRatchetStore(dir, macKey32);
       const state = newState();
       return { dir, macKey32, store, state };
     }
@@ -403,7 +296,7 @@ describe("FileRatchetStore", () => {
       }
     });
 
-    it("rejects garbage and the legacy plain-number format by default", () => {
+    it("rejects garbage and the 2.1.x plain-number format", () => {
       const { dir, store, state } = setup();
       try {
         store.save("sess", { version: 2, state });
@@ -414,26 +307,7 @@ describe("FileRatchetStore", () => {
         expect(() => store.save("sess", { version: 3, state })).toThrow(/Invalid rollback counter file/);
 
         writeFileSync(p, "0", "utf-8");
-        expect(() => store.load("sess")).toThrow(/Legacy rollback counter format/);
-      } finally {
-        rmSync(dir, { recursive: true, force: true });
-      }
-    });
-
-    it("migrates a legacy plain-number counter when allowLegacyFormat is set", () => {
-      const { dir, macKey32, store, state } = setup({ allowLegacyFormat: true });
-      try {
-        store.save("sess", { version: 2, state });
-        const p = join(dir, "sess.ver");
-
-        writeFileSync(p, "3", "utf-8");
-        expect(() => store.load("sess")).toThrow(/Rollback detected/); // still enforced
-
-        writeFileSync(p, "2", "utf-8");
-        const loaded = store.load("sess")!;
-        store.save("sess", loaded);
-        expect(JSON.parse(readFileSync(p, "utf-8")).v).toBe(2);
-        expect(new FileRatchetStore(dir, macKey32).load("sess")!.version).toBe(2);
+        expect(() => store.load("sess")).toThrow(/Invalid rollback counter file/);
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }
@@ -470,23 +344,17 @@ describe("FileRatchetStore", () => {
       return { dir, store };
     }
     const keyId = (n: number) => `${bytesToBase64(randomBytes(32))}:${n}`;
-    const mk = () => Array.from(randomBytes(32));
+    const mk = () => bytesToBase64(randomBytes(32));
 
     it("loads skipped keys written by the ratchet", () => {
       const dir = mkdtempSync(join(tmpdir(), "ratchet-store-"));
       try {
-        const root = randomBytes(32);
-        const aliceDh = generateX25519Keypair();
-        const bobDh = generateX25519Keypair();
-        let alice = ratchetInit({ rk32: root, selfDh: aliceDh, remoteDhPub32: bobDh.pub32, sendingFirst: true });
-        let bob = ratchetInit({ rk32: root, selfDh: bobDh, remoteDhPub32: aliceDh.pub32, sendingFirst: false });
+        let { alice, bob } = sessionPair();
         const sent = [];
         for (let i = 0; i < 4; i++) {
           const r = ratchetEncrypt({
             state: alice,
             plaintext: encode(`m${i}`),
-            sender_device_id: "alice",
-            recipient_device_id: "bob",
           });
           alice = r.state;
           sent.push(r);
@@ -544,6 +412,111 @@ describe("FileRatchetStore", () => {
       const { dir, store } = storeWithSkipped([[id, mk()], [id, mk()]]);
       try {
         expect(() => store.load("sess")).toThrow(/state\.skipped\[1\]\[0\] \(duplicate\)/);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe("file-system failures", () => {
+    /** A session id that must never reach a message. */
+    const SESSION = "5e471e1a-3c9e-4f1d-9b2a-7c6d5e4f3a21";
+
+    function thrownBy(fn: () => unknown): Error {
+      try {
+        fn();
+      } catch (err) {
+        return err as Error;
+      }
+      throw new Error("expected a throw");
+    }
+
+    function expectStoreIo(err: Error, dir: string): StoreIoError {
+      expect(err).toBeInstanceOf(StoreIoError);
+      expect((err as StoreIoError).code).toBe("store_io");
+      expect(err.message).toBe("Session store I/O failed");
+      expect(err.message).not.toContain(SESSION);
+      expect(err.message).not.toContain(dir);
+      expect(err).not.toHaveProperty("cause");
+      return err as StoreIoError;
+    }
+
+    it("a lock left behind is store_io EEXIST on load, save and transact, and deleting it recovers", () => {
+      const dir = mkdtempSync(join(tmpdir(), "ratchet-store-"));
+      try {
+        const store = new FileRatchetStore(dir, randomBytes(32));
+        const record = createPersistedSession(newState());
+        store.save(SESSION, record);
+        // A crash between taking the lock and releasing it leaves this file.
+        writeFileSync(join(dir, `${SESSION}.lock`), "");
+        for (const call of [
+          () => store.load(SESSION),
+          () => store.save(SESSION, { ...record, version: record.version + 1 }),
+          () => store.transact(SESSION, (r) => r),
+        ]) {
+          expect(expectStoreIo(thrownBy(call), dir).fsCode).toBe("EEXIST");
+        }
+        // SPEC §14's recovery: with no process using the store, delete the lock.
+        unlinkSync(join(dir, `${SESSION}.lock`));
+        expect(store.load(SESSION)?.version).toBe(record.version);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("a base directory that cannot be created is store_io, naming no path or id", () => {
+      const dir = mkdtempSync(join(tmpdir(), "ratchet-store-"));
+      try {
+        const notADir = join(dir, "file");
+        writeFileSync(notADir, "");
+        const store = new FileRatchetStore(join(notADir, "sessions"), randomBytes(32));
+        expectStoreIo(thrownBy(() => store.load(SESSION)), dir);
+        expectStoreIo(thrownBy(() => store.save(SESSION, createPersistedSession(newState()))), dir);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("a failed read or write of a session file is store_io, naming no path or id", () => {
+      const dir = mkdtempSync(join(tmpdir(), "ratchet-store-"));
+      try {
+        const store = new FileRatchetStore(dir, randomBytes(32));
+        // The lock succeeds; reading, and renaming the written file into place, fail.
+        mkdirSync(join(dir, `${SESSION}.json`));
+        expect(expectStoreIo(thrownBy(() => store.load(SESSION)), dir).fsCode).toBe("EISDIR");
+        expectStoreIo(thrownBy(() => store.save(SESSION, createPersistedSession(newState()))), dir);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("a session file that is not JSON is refused without quoting it", () => {
+      const dir = mkdtempSync(join(tmpdir(), "ratchet-store-"));
+      try {
+        const store = new FileRatchetStore(dir, randomBytes(32));
+        store.save(SESSION, createPersistedSession(newState()));
+        writeFileSync(join(dir, `${SESSION}.json`), `${SESSION} is not JSON`);
+        const err = thrownBy(() => store.load(SESSION));
+        expect(err.message).toBe("Invalid session file: not JSON");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("a transact callback's own error passes through, and the lock is released", () => {
+      const dir = mkdtempSync(join(tmpdir(), "ratchet-store-"));
+      try {
+        const store = new FileRatchetStore(dir, randomBytes(32));
+        store.save(SESSION, createPersistedSession(newState()));
+        const own = new ReplayDetectedError();
+        expect(
+          thrownBy(() =>
+            store.transact(SESSION, () => {
+              throw own;
+            })
+          )
+        ).toBe(own);
+        expect(store.load(SESSION)).toBeDefined();
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }
