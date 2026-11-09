@@ -44,8 +44,7 @@ const PARAMS = {
   ],
 };
 
-const HERE = path.dirname(new URL(import.meta.url).pathname);
-const VECTORS_DIR = path.join(HERE, '..', 'vectors');
+const VECTORS_DIR = path.resolve(import.meta.dirname, '..', 'vectors');
 const PROOF_FILE = path.join(VECTORS_DIR, 'device-proof-v1.json');
 const CODE_FILE = path.join(VECTORS_DIR, 'device-code-v1.json');
 
