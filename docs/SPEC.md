@@ -174,22 +174,31 @@ a device id that is not canonical is `invalid_device_id`; an unknown action, a
 session id that is not a canonical UUID, a time that is not a safe integer ≥ 0, a
 missing or extra target, an approval of the acting device itself, or a target key
 of the wrong length is a `TypeError`. `""` and an empty key are the absent values:
-given where no target belongs, they build the same bytes as leaving them out. `X3DHPrekeyManagerV2.signDeviceProof` signs
+given where no target belongs, they build the same bytes as leaving them out;
+given where one belongs, they are a missing target. `X3DHPrekeyManagerV2.signDeviceProof` signs
 with the manager's own device as the acting device, so the key never leaves it.
 
 **Verification** (`verifyDeviceProof`) rebuilds the message from the verifier's
-own fields, the session id taken from the verified JWT and never from the request,
-then checks in this order:
+own fields, never the request's: the session id from the verified JWT, approve's
+target key as stored for the target. Fields that refuse to build, an acting key
+that is not 32 bytes and a `now_s` that is not a safe integer ≥ 0 throw a
+`TypeError`. Then, in this order:
 
-1. A signature that is not 64 bytes or does not verify under the acting device's
+1. An acting key that is not a canonical encoding of a point outside the
+   small-order subgroup is `bad_signature`: under a small-order key a ZIP-215
+   verifier accepts a forged signature on any message.
+2. A signature that is not 64 bytes or does not verify under the acting device's
    stored IKsig is `bad_signature`.
-2. `|now_s − issued_at_s| > 300` is `expired`: 300 seconds either way passes, 301
+3. `|now_s − issued_at_s| > 300` is `expired`: 300 seconds either way passes, 301
    fails. `now_s` is the verifier's clock in whole seconds.
 
 So `expired` is said only of an authentic proof. A proof binds one action, one
 acting device, one session, one target (for `approve`, that target's key too) and
 601 seconds (300 either side of `issued_at_s`). It carries no nonce: a replay inside the span repeats an
-action, which the server makes idempotent.
+action, which the server makes idempotent. That rests on host rules: a removed
+device id never returns, and a session resets at most once. A `refresh` proof
+vouches only for the device's presence; the keys it re-registers carry their own
+signatures (§4.1).
 
 **Pairing code.** For a device's IKsig:
 
@@ -203,7 +212,10 @@ device. It is a comparison value, not a secret: anyone who can list the pending
 devices can compute it, and about 10^6 key draws give a key with a chosen code in
 seconds. So the code only selects. The host refuses an approval whose code matches
 more than one pending device, and the proof signs the selected device's whole key
-(`target_ik_sig_pub`). The modulo bias (the 967,296 codes below 2^32 mod 10^6
+(`target_ik_sig_pub`). After such a tie the user cannot tell the two apart by the
+code, so the host must have both removed and the new device set up again, never
+one removed and the code retried: if the user removed the real one, the code would
+then select the other. The modulo bias (the 967,296 codes below 2^32 mod 10^6
 are 1 in 4,294 likelier) is negligible.
 
 ## 5. Associated data
@@ -623,7 +635,9 @@ at the primitive level (RFC and draft vectors in `vectors/primitives.json`).
   §3 and §4.5 and the public texts only, with its own CBOR encoder, node:crypto's
   Ed25519 and SHA-256, and the same three imports; `vectors:check` runs it too.
   Its readings of §4.5 are in its `PARAMS.readings`. The server's mirror must
-  reproduce every valid case's message and signature and every verdict.
+  reproduce every valid case's message and signature and every verdict, the
+  small-order keys' `bad_signature` included (WebCrypto's Ed25519 is not ZIP-215,
+  but the mirror checks the key itself).
 - `vectors/spk-sig-msg-v1.json`: the library's v1 golden file for the
   signed-prekey message, unchanged.
 - `vectors/opk-batch-sig-msg-v1.json`: the one-time prekey batch message and

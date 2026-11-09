@@ -10,6 +10,7 @@
  * vectors/device-code-v1.json pin them.
  */
 
+import { ed25519 } from "@noble/curves/ed25519.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { encodeCbor } from "../encoding/cbor.js";
 import { assertCanonicalDeviceId, isCanonicalDeviceId } from "./device-id.js";
@@ -40,6 +41,7 @@ export interface DeviceProofFields {
   action: DeviceProofAction;
   acting_device_id: string;
   session_id: string;
+  /** Unix time in seconds, not milliseconds (a millisecond time is always `expired`). */
   issued_at_s: number;
   target_device_id?: string | undefined;
   target_ik_sig_pub32?: Uint8Array | undefined;
@@ -71,7 +73,9 @@ export function buildDeviceProofMessage(fields: DeviceProofFields): Uint8Array {
   let target = "";
   let targetKey: Uint8Array = EMPTY;
   if (TARGETED[action]) {
-    if (target_device_id === undefined) throw new TypeError(`A ${action} proof needs target_device_id`);
+    if (target_device_id === undefined || target_device_id === "") {
+      throw new TypeError(`A ${action} proof needs target_device_id`);
+    }
     assertCanonicalDeviceId(target_device_id);
     target = target_device_id;
   } else if (target_device_id !== undefined && target_device_id !== "") {
@@ -93,11 +97,28 @@ export function buildDeviceProofMessage(fields: DeviceProofFields): Uint8Array {
 export type DeviceProofVerdict = "valid" | "bad_signature" | "expired";
 
 /**
- * Checks a proof against the verifier's own facts: the fields as the server knows
- * them (the session id from the verified JWT), the acting device's stored key and
- * the verifier's clock in whole seconds. The signature first, so `expired` is said
- * only of an authentic proof. A signature of the wrong length is `bad_signature`;
- * fields outside the spec throw as in {@link buildDeviceProofMessage}.
+ * True for a 32-byte Ed25519 public key in canonical encoding that is not of small
+ * order. Any signature verifies under a small-order key on a ZIP-215 verifier
+ * (@noble's default), so such a key must never count as a device's.
+ */
+function isSoundSigningKey(pub32: Uint8Array): boolean {
+  try {
+    return !ed25519.Point.fromBytes(pub32, false).isSmallOrder();
+  } catch {
+    return false; // not a canonical point encoding
+  }
+}
+
+/**
+ * Checks a proof against the verifier's own facts, never the request's: the fields
+ * as the server knows them (the session id from the verified JWT, approve's target
+ * key as stored), the acting device's stored key and the verifier's clock in whole
+ * seconds. Order: the acting key (a small-order or non-canonical key is
+ * `bad_signature`), the signature (wrong length is `bad_signature`), then the time,
+ * so `expired` is said only of an authentic proof. Throws a TypeError on fields
+ * outside the spec, as {@link buildDeviceProofMessage} does, and on a key that isn't
+ * 32 bytes or a `now_s` that isn't a safe integer >= 0; a server maps any throw to
+ * its own refusal.
  */
 export function verifyDeviceProof(args: {
   fields: DeviceProofFields;
@@ -105,14 +126,19 @@ export function verifyDeviceProof(args: {
   proof_sig64: Uint8Array;
   now_s: number;
 }): DeviceProofVerdict {
-  const message = buildDeviceProofMessage(args.fields);
-  if (!(args.acting_ik_sig_pub32 instanceof Uint8Array) || args.acting_ik_sig_pub32.byteLength !== 32) {
+  // One read of each field: the time checked below is the time that was signed.
+  const fields: DeviceProofFields = { ...args.fields };
+  const { acting_ik_sig_pub32, proof_sig64, now_s } = args;
+  const message = buildDeviceProofMessage(fields);
+  if (!(acting_ik_sig_pub32 instanceof Uint8Array) || acting_ik_sig_pub32.byteLength !== 32) {
     throw new TypeError("acting_ik_sig_pub32 must be 32 bytes");
   }
-  if (!isSecondsTime(args.now_s)) throw new TypeError("now_s must be a safe integer >= 0");
-  if (!(args.proof_sig64 instanceof Uint8Array) || args.proof_sig64.byteLength !== 64) return "bad_signature";
-  if (!ed25519Verify(args.acting_ik_sig_pub32, message, args.proof_sig64)) return "bad_signature";
-  return Math.abs(args.now_s - args.fields.issued_at_s) > DEVICE_PROOF_MAX_SKEW_S ? "expired" : "valid";
+  if (!isSecondsTime(now_s)) throw new TypeError("now_s must be a safe integer >= 0");
+  if (!isSoundSigningKey(acting_ik_sig_pub32)) return "bad_signature";
+  if (!(proof_sig64 instanceof Uint8Array) || proof_sig64.byteLength !== 64) return "bad_signature";
+  if (!ed25519Verify(acting_ik_sig_pub32, message, proof_sig64)) return "bad_signature";
+  // Written so that anything but a number within the window fails closed.
+  return Math.abs(now_s - fields.issued_at_s) <= DEVICE_PROOF_MAX_SKEW_S ? "valid" : "expired";
 }
 
 /**

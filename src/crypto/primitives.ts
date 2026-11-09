@@ -15,8 +15,10 @@
  * - ed25519Sign takes the 32-byte RFC 8032 seed, not a 64-byte expanded key.
  *   Signing is deterministic, so backends must agree byte-for-byte.
  * - ed25519Verify must reject invalid signatures. Acceptance of non-canonical
- *   edge encodings may differ per backend (zip215 vs strict); that only
- *   affects adversarially crafted signatures and fails closed.
+ *   edge encodings may differ per backend (zip215 vs strict). Under a
+ *   small-order public key a zip215 verifier accepts forged signatures, so a
+ *   caller that trusts a stored key refuses small-order keys itself (as
+ *   verifyDeviceProof does; SPEC §4.5).
  * - xchacha20poly1305Encrypt returns ciphertext || 16-byte Poly1305 tag;
  *   decrypt must throw on authentication failure.
  * - randomBytes must be a CSPRNG. Registration rejects providers without one.

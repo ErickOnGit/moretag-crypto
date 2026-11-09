@@ -32,13 +32,15 @@ const PARAMS = {
   max_skew_s: 300,
   readings: [
     'R1. Absent target fields: for remove/reset/refresh "every other action: empty (0 bytes)" and for reset/refresh target_device_id "" (§4.5 table). A field omitted from `fields` is put on the wire as the text "" or the empty byte string.',
-    'R2. Reset or refresh given an explicit target_device_id "" (§4.5 table: "`reset`, `refresh`: `\\"\\"`"): this is exactly the field value the table prescribes, so it is not an "extra target"; it builds the same bytes as an absent one. It is a valid case, not a refusal.',
+    'R2. §4.5: "`\\"\\"` and an empty key are the absent values: given where no target belongs, they build the same bytes as leaving them out." Read further: given where a target belongs (target id for approve/remove, key for approve) they are also absent, so the target is "missing" (type_error), not a non-canonical device id.',
     'R3. "a session id that is not a canonical UUID ... is a `TypeError`": the session id refuses with type_error, never invalid_device_id (it is not a device id).',
     'R4. "a device id that is not canonical is `invalid_device_id`" covers both acting_device_id and target_device_id when a non-empty target id is given where one is required (approve, remove).',
     'R5. issued_at_s must be a JSON/JS number that is a safe integer >= 0; a string, a fraction, a negative number or 2^53 is type_error. Times of 2^32 and above use the 8-byte CBOR head (§2: "integers of 2^32 and above as integers").',
     'R6. Pairing code input: the UTF-8 bytes of "moretag/device-code/v1" directly followed by the 32 raw IKsig bytes, no separator or length prefix; the IKsig must be exactly 32 bytes, else type_error.',
     'R7. Verification rebuilds the message from the verifier fields; a signature of any length other than 64 is bad_signature (not a TypeError), and the signature is checked before the time, so a bad and stale proof is bad_signature.',
     'R8. The target key for approve is checked only for length (32 bytes), not as a curve point; §4.5 states only the length.',
+    'R9. Verifier key rule (given by the coordinator as new §4.5 text; not present in the §4.5 the author read): an acting key that is not 32 bytes is type_error; one that does not decode canonically (RFC 8032 §5.1.3: y >= p, or x = 0 with the sign bit set, or no square root) or decodes to a point of small order ([8]P = identity) is bad_signature, checked before the signature. Small order is computed here with RFC 8032 §5.1.4 point arithmetic, not taken from a list.',
+    'R10. now_s must be a safe integer >= 0, else the verifier throws type_error (given by the coordinator; not present in the §4.5 the author read). Checked before everything else.',
   ],
 };
 
@@ -138,6 +140,14 @@ function selfCheck() {
   eq('RFC 8032 §7.1 test 1 signature', hex(sign(t1Secret, Buffer.alloc(0))), t1Sig);
   eq('RFC 8032 §7.1 test 1 verifies', String(verifySig(unhex(t1Public), Buffer.alloc(0), unhex(t1Sig))), 'true');
 
+  // RFC 8032 §5.1: the base point B (y = 4/5, x from the RFC) decodes from its
+  // encoding 58 66..66, has order neither small, and test 1's key is not small.
+  const B = decodePoint(unhex('58' + '66'.repeat(31)));
+  eq('RFC 8032 §5.1 base point x', String(B && B[0]), '15112221349535400772501151409588531511454012693041857206046113283949847762202');
+  eq('RFC 8032 §5.1 base point y', String(B && B[1]), String(mod(4n * inv(5n))));
+  eq('base point not small order', String(B && isSmallOrder(B)), 'false');
+  eq('test 1 key not small order', String(isSmallOrder(decodePoint(unhex(t1Public)))), 'false');
+
   // FIPS 180-4 / NIST example: SHA-256("abc").
   eq('SHA-256("abc")', hex(sha256(Buffer.from('abc'))), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
 
@@ -159,6 +169,40 @@ function selfCheck() {
   }
 }
 
+// ---------- edwards25519 (RFC 8032 §5.1), BigInt, for the key checks ----------
+
+const P = 2n ** 255n - 19n;
+const mod = (a) => ((a % P) + P) % P;
+function powmod(b, e) { let r = 1n; b = mod(b); while (e > 0n) { if (e & 1n) r = r * b % P; b = b * b % P; e >>= 1n; } return r; }
+const inv = (a) => powmod(a, P - 2n);
+const D = mod(-121665n * inv(121666n));
+const SQRT_M1 = powmod(2n, (P - 1n) / 4n);
+// RFC 8032 §5.1.3 decoding; null when the encoding is not canonical or not on the curve.
+function decodePoint(b) {
+  const bytes = Buffer.from(b);
+  const sign = bytes[31] >> 7;
+  bytes[31] &= 0x7f;
+  const y = BigInt('0x' + hex(Buffer.from(bytes).reverse()));
+  if (y >= P) return null;
+  const u = mod(y * y - 1n);
+  const v = mod(D * y * y + 1n);
+  let x = mod(u * powmod(v, 3n) * powmod(u * powmod(v, 7n), (P - 5n) / 8n));
+  const vx2 = mod(v * x * x);
+  if (vx2 === mod(-u)) x = mod(x * SQRT_M1);
+  else if (vx2 !== u) return null;
+  if (x === 0n && sign === 1) return null;
+  if (Number(x & 1n) !== sign) x = mod(-x);
+  return [x, y];
+}
+function add([x1, y1], [x2, y2]) {
+  const t = mod(D * x1 * x2 * y1 * y2);
+  return [mod((x1 * y2 + x2 * y1) * inv(1n + t)), mod((y1 * y2 + x1 * x2) * inv(1n - t))];
+}
+const dbl = (p) => add(p, p);
+const isIdentity = ([x, y]) => x === 0n && y === 1n;
+const isSmallOrder = (p) => isIdentity(dbl(dbl(dbl(p))));
+function orderOfSmall(p) { let q = p; for (let k = 1; k <= 8; k++) { if (isIdentity(q)) return k; q = add(q, p); } return null; }
+
 // ---------- device proof (reference reading of SPEC §4.5) ----------
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -178,8 +222,9 @@ function buildParts(fields) {
   if (typeof acting !== 'string' || !UUID_RE.test(acting)) devErr('acting id');
   if (typeof session !== 'string' || !UUID_RE.test(session)) typeErr('session id');
   if (typeof t !== 'number' || !Number.isSafeInteger(t) || t < 0) typeErr('issued_at_s');
-  const hasId = has(fields, 'target_device_id');
-  const hasKey = has(fields, 'target_ik_sig_pub_hex');
+  // R2: "" and an empty key are the absent values.
+  const hasId = has(fields, 'target_device_id') && fields.target_device_id !== '';
+  const hasKey = has(fields, 'target_ik_sig_pub_hex') && fields.target_ik_sig_pub_hex !== '';
   let targetId = '';
   let targetKey = Buffer.alloc(0);
   if (action === 'approve' || action === 'remove') {
@@ -193,8 +238,7 @@ function buildParts(fields) {
       if (targetKey.length !== 32) typeErr('target key length');
     } else if (hasKey) typeErr('extra target key');
   } else {
-    // R2: an explicit "" is the prescribed value, not an extra target.
-    if (hasId && fields.target_device_id !== '') typeErr('extra target id');
+    if (hasId) typeErr('extra target id');
     if (hasKey) typeErr('extra target key');
   }
   const elems = [PARAMS.proof_domain, action, acting, session, t, targetId, targetKey];
@@ -203,7 +247,11 @@ function buildParts(fields) {
 const buildMessage = (fields) => Buffer.concat(buildParts(fields).parts);
 
 function verifyProof(fields, storedPub, sig, nowS) {
+  if (typeof nowS !== 'number' || !Number.isSafeInteger(nowS) || nowS < 0) typeErr('now_s');
+  if (!(storedPub instanceof Uint8Array) || storedPub.length !== 32) typeErr('acting key length');
   const msg = buildMessage(fields);
+  const A = decodePoint(storedPub);
+  if (A === null || isSmallOrder(A)) return 'bad_signature';
   if (!verifySig(storedPub, msg, sig)) return 'bad_signature';
   if (Math.abs(nowS - fields.issued_at_s) > PARAMS.max_skew_s) return 'expired';
   return 'valid';
@@ -258,7 +306,12 @@ function genProof() {
   addValid('refresh', { action: 'refresh', ...base, issued_at_s: NOW });
   // R2: explicit "" target id on reset builds the same message as reset.
   addValid('reset_explicit_empty_target_id', { action: 'reset', ...base, issued_at_s: NOW, target_device_id: '' });
-  if (byName.reset_explicit_empty_target_id.message_cbor_hex !== byName.reset.message_cbor_hex) throw new Error('R2 bytes differ');
+  addValid('remove_explicit_empty_target_key', { action: 'remove', ...base, issued_at_s: NOW, target_device_id: T.device_id, target_ik_sig_pub_hex: '' });
+  addValid('refresh_explicit_empty_target_id', { action: 'refresh', ...base, issued_at_s: NOW, target_device_id: '' });
+  addValid('refresh_explicit_empty_target_key', { action: 'refresh', ...base, issued_at_s: NOW, target_ik_sig_pub_hex: '' });
+  for (const [a, b] of [['reset_explicit_empty_target_id', 'reset'], ['remove_explicit_empty_target_key', 'remove'], ['refresh_explicit_empty_target_id', 'refresh'], ['refresh_explicit_empty_target_key', 'refresh']]) {
+    if (byName[a].message_cbor_hex !== byName[b].message_cbor_hex) throw new Error(`R2 bytes differ: ${a}`);
+  }
 
   const widths = [0, 23, 24, 255, 256, 65535, 65536, 4294967295, 4294967296, 9007199254740991];
   widths.forEach((t, i) => {
@@ -271,7 +324,8 @@ function genProof() {
   // ---- verify ----
   const signerPub = { acting: A.ik_sig_public_hex, target: T.ik_sig_public_hex, other: O.ik_sig_public_hex };
   const verify = [];
-  const addVerify = (name, baseName, { overrides = {}, signer = 'acting', now_s, sig, expect }) => {
+  const addVerify = (name, baseName, { overrides = {}, signer = 'acting', signerHex, now_s, sig, expect, note }) => {
+    if (signerHex !== undefined) signerPub[signer] = signerHex;
     const b = byName[baseName];
     const fields = { ...b.fields };
     for (const [k, v] of Object.entries(overrides)) {
@@ -286,6 +340,7 @@ function genProof() {
       verifier: { fields: overrides, signer, signer_ik_sig_public_hex: signerPub[signer], now_s },
       signature_hex: sigHex,
       expect,
+      ...(note ? { note } : {}),
     });
   };
   const flip = (h) => { const b = unhex(h); b[10] ^= 0x01; return hex(b); };
@@ -313,6 +368,39 @@ function genProof() {
   addVerify('signature_empty', 'reset', { now_s: NOW, sig: '', expect: 'bad_signature' });
   addVerify('bad_signature_and_stale', 'approve', { now_s: NOW + 301, sig: flip(byName.approve.signature_hex), expect: 'bad_signature' });
   addVerify('remove_checked_as_reset', 'remove', { overrides: { action: 'reset', target_device_id: null }, now_s: NOW, expect: 'bad_signature' });
+
+  // R9: small-order and non-canonical acting keys.
+  const ZERO32 = '00'.repeat(32);
+  const ID_ENC = '01' + '00'.repeat(31);
+  const idPt = decodePoint(unhex(ID_ENC));
+  if (!idPt || !isIdentity(idPt)) throw new Error('identity decode');
+  // An order-8 point: the canonical encoding listed as small-order in libsodium's
+  // blocklist and in Chalkias, Garillot, Nikolaenko, "Taming the many EdDSAs"
+  // (2020), Table 6; its order is recomputed here, not trusted.
+  const ORD8_ENC = 'c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a';
+  const o8 = decodePoint(unhex(ORD8_ENC));
+  if (!o8 || orderOfSmall(o8) !== 8) throw new Error('order-8 point check');
+  // Non-canonical identity: y = p + 1 (>= p), little-endian, sign bit 0.
+  const NONCANON_ID_ENC = hex(Buffer.from((P + 1n).toString(16).padStart(64, '0'), 'hex').reverse());
+  if (decodePoint(unhex(NONCANON_ID_ENC)) !== null) throw new Error('non-canonical accepted');
+  const zip215Note = 'R = the key encoding, S = 0: a cofactored (ZIP-215) verifier accepts it for any message';
+  addVerify('small_order_identity_key', 'reset', { signer: 'identity_point', signerHex: ID_ENC, now_s: NOW, sig: ID_ENC + ZERO32, expect: 'bad_signature', note: `acting key = identity point (y = 1); ${zip215Note}` });
+  addVerify('small_order_order8_key', 'reset', { signer: 'order8_point', signerHex: ORD8_ENC, now_s: NOW, sig: ORD8_ENC + ZERO32, expect: 'bad_signature', note: `acting key = an order-8 point (libsodium blocklist; Chalkias et al. 2020, "Taming the many EdDSAs"), order recomputed by the generator; ${zip215Note}` });
+  addVerify('noncanonical_identity_key', 'reset', { signer: 'noncanonical_identity', signerHex: NONCANON_ID_ENC, now_s: NOW, sig: ID_ENC + ZERO32, expect: 'bad_signature', note: 'acting key = the identity with y = p + 1 (non-canonical, RFC 8032 §5.1.3 refuses y >= p); signature R = canonical identity, S = 0' });
+
+  // R10 and the key length: inputs the verifier refuses by throwing.
+  const verify_refusals = [];
+  const addVerifyRefusal = (name, baseName, { keyHex = A.ik_sig_public_hex, now_s }) => {
+    const b = byName[baseName];
+    let got = 'returned';
+    try { verifyProof({ ...b.fields }, unhex(keyHex), unhex(b.signature_hex), now_s); } catch (e) { if (!(e instanceof Refusal)) throw e; got = e.code; }
+    if (got !== 'type_error') throw new Error(`verify refusal ${name}: got ${got}`);
+    verify_refusals.push({ name, base: baseName, verifier: { fields: {}, signer_ik_sig_public_hex: keyHex, now_s }, signature_hex: b.signature_hex, expect: 'type_error' });
+  };
+  addVerifyRefusal('now_negative', 'reset', { now_s: -1 });
+  addVerifyRefusal('now_fraction', 'reset', { now_s: 1.5 });
+  addVerifyRefusal('now_2_pow_53', 'reset', { now_s: 9007199254740992 });
+  addVerifyRefusal('acting_key_31_bytes', 'reset', { keyHex: A.ik_sig_public_hex.slice(0, 62), now_s: NOW });
 
   // ---- refusals ----
   const refusals = [];
@@ -351,9 +439,12 @@ function genProof() {
   addRefusal('issued_at_fraction', { ...rs, issued_at_s: 1.5 }, 'type_error');
   addRefusal('issued_at_2_pow_53', { ...rs, issued_at_s: 9007199254740992 }, 'type_error');
   addRefusal('issued_at_string', { ...rs, issued_at_s: '1762560000' }, 'type_error');
+  addRefusal('remove_empty_target_id', { ...rm, target_device_id: '' }, 'type_error');
+  addRefusal('approve_empty_target_id', { ...ap, target_device_id: '' }, 'type_error');
+  addRefusal('approve_empty_target_key', { ...ap, target_ik_sig_pub_hex: '' }, 'type_error');
 
   return {
-    about: 'Device proof vectors, docs/SPEC.md §4.5: Ed25519 (RFC 8032) by the acting device\'s IKsig over the shortest-form CBOR array ["moretag/device-proof/v1", action, acting_device_id, session_id, issued_at_s, target_device_id, target_ik_sig_pub]. A field absent from `fields` goes on the wire as "" (text) or the empty byte string. In `verify`, `verifier.fields` overrides the base case\'s fields (null removes a field), `signer` names the party whose IKsig public key the verifier uses as the acting device\'s stored key, and `signature_hex` is the signature checked. Written independently by scripts/gen-vectors-device-v1.mjs from the spec and public texts only.',
+    about: 'Device proof vectors, docs/SPEC.md §4.5: Ed25519 (RFC 8032) by the acting device\'s IKsig over the shortest-form CBOR array ["moretag/device-proof/v1", action, acting_device_id, session_id, issued_at_s, target_device_id, target_ik_sig_pub]. A field absent from `fields` goes on the wire as "" (text) or the empty byte string. In `verify`, `verifier.fields` overrides the base case\'s fields (null removes a field), `signer` names the party (or, for crafted keys, the key) whose IKsig public key, `signer_ik_sig_public_hex`, the verifier uses as the acting device\'s stored key, and `signature_hex` is the signature checked. `verify_refusals` are verifier inputs that throw (type_error). An empty target key is written target_ik_sig_pub_hex: "". Written independently by scripts/gen-vectors-device-v1.mjs from the spec and public texts only.',
     domain: PARAMS.proof_domain,
     params: PARAMS,
     parties: {
@@ -365,6 +456,7 @@ function genProof() {
     },
     valid,
     verify,
+    verify_refusals,
     refusals,
   };
 }

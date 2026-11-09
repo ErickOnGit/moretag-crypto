@@ -1,5 +1,5 @@
 {
-  "about": "Device proof vectors, docs/SPEC.md §4.5: Ed25519 (RFC 8032) by the acting device's IKsig over the shortest-form CBOR array [\"moretag/device-proof/v1\", action, acting_device_id, session_id, issued_at_s, target_device_id, target_ik_sig_pub]. A field absent from `fields` goes on the wire as \"\" (text) or the empty byte string. In `verify`, `verifier.fields` overrides the base case's fields (null removes a field), `signer` names the party whose IKsig public key the verifier uses as the acting device's stored key, and `signature_hex` is the signature checked. Written independently by scripts/gen-vectors-device-v1.mjs from the spec and public texts only.",
+  "about": "Device proof vectors, docs/SPEC.md §4.5: Ed25519 (RFC 8032) by the acting device's IKsig over the shortest-form CBOR array [\"moretag/device-proof/v1\", action, acting_device_id, session_id, issued_at_s, target_device_id, target_ik_sig_pub]. A field absent from `fields` goes on the wire as \"\" (text) or the empty byte string. In `verify`, `verifier.fields` overrides the base case's fields (null removes a field), `signer` names the party (or, for crafted keys, the key) whose IKsig public key, `signer_ik_sig_public_hex`, the verifier uses as the acting device's stored key, and `signature_hex` is the signature checked. `verify_refusals` are verifier inputs that throw (type_error). An empty target key is written target_ik_sig_pub_hex: \"\". Written independently by scripts/gen-vectors-device-v1.mjs from the spec and public texts only.",
   "domain": "moretag/device-proof/v1",
   "params": {
     "secret_rule": "secret(label) = SHA-256(UTF-8(\"moretag-crypto/vectors/device/v1/\" || label))",
@@ -10,13 +10,15 @@
     "max_skew_s": 300,
     "readings": [
       "R1. Absent target fields: for remove/reset/refresh \"every other action: empty (0 bytes)\" and for reset/refresh target_device_id \"\" (§4.5 table). A field omitted from `fields` is put on the wire as the text \"\" or the empty byte string.",
-      "R2. Reset or refresh given an explicit target_device_id \"\" (§4.5 table: \"`reset`, `refresh`: `\\\"\\\"`\"): this is exactly the field value the table prescribes, so it is not an \"extra target\"; it builds the same bytes as an absent one. It is a valid case, not a refusal.",
+      "R2. §4.5: \"`\\\"\\\"` and an empty key are the absent values: given where no target belongs, they build the same bytes as leaving them out.\" Read further: given where a target belongs (target id for approve/remove, key for approve) they are also absent, so the target is \"missing\" (type_error), not a non-canonical device id.",
       "R3. \"a session id that is not a canonical UUID ... is a `TypeError`\": the session id refuses with type_error, never invalid_device_id (it is not a device id).",
       "R4. \"a device id that is not canonical is `invalid_device_id`\" covers both acting_device_id and target_device_id when a non-empty target id is given where one is required (approve, remove).",
       "R5. issued_at_s must be a JSON/JS number that is a safe integer >= 0; a string, a fraction, a negative number or 2^53 is type_error. Times of 2^32 and above use the 8-byte CBOR head (§2: \"integers of 2^32 and above as integers\").",
       "R6. Pairing code input: the UTF-8 bytes of \"moretag/device-code/v1\" directly followed by the 32 raw IKsig bytes, no separator or length prefix; the IKsig must be exactly 32 bytes, else type_error.",
       "R7. Verification rebuilds the message from the verifier fields; a signature of any length other than 64 is bad_signature (not a TypeError), and the signature is checked before the time, so a bad and stale proof is bad_signature.",
-      "R8. The target key for approve is checked only for length (32 bytes), not as a curve point; §4.5 states only the length."
+      "R8. The target key for approve is checked only for length (32 bytes), not as a curve point; §4.5 states only the length.",
+      "R9. Verifier key rule (given by the coordinator as new §4.5 text; not present in the §4.5 the author read): an acting key that is not 32 bytes is type_error; one that does not decode canonically (RFC 8032 §5.1.3: y >= p, or x = 0 with the sign bit set, or no square root) or decodes to a point of small order ([8]P = identity) is bad_signature, checked before the signature. Small order is computed here with RFC 8032 §5.1.4 point arithmetic, not taken from a list.",
+      "R10. now_s must be a safe integer >= 0, else the verifier throws type_error (given by the coordinator; not present in the §4.5 the author read). Checked before everything else."
     ]
   },
   "parties": {
@@ -207,6 +209,43 @@
       },
       "message_cbor_hex": "87776d6f72657461672f6465766963652d70726f6f662f7631657265736574782461636435353536322d663861392d323934362d346534392d616433646236323264636364782464396634623764322d316439632d653532612d643365632d3464626431343562643563371a690e88006040",
       "signature_hex": "445b0e753197ac1dc3d7222bb09c6b8508617449f59d639e183124f2fd7c20978034bb58f632634113eefd59ddeb1f0e34b0a3bb9ed1c0486c2807b041a4420a"
+    },
+    {
+      "name": "remove_explicit_empty_target_key",
+      "fields": {
+        "action": "remove",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 1762560000,
+        "target_device_id": "5b384f92-786f-79f8-044b-80c32123f006",
+        "target_ik_sig_pub_hex": ""
+      },
+      "message_cbor_hex": "87776d6f72657461672f6465766963652d70726f6f662f76316672656d6f7665782461636435353536322d663861392d323934362d346534392d616433646236323264636364782464396634623764322d316439632d653532612d643365632d3464626431343562643563371a690e8800782435623338346639322d373836662d373966382d303434622d38306333323132336630303640",
+      "signature_hex": "4971505e46170014e0df0a5785b75be545c71b69ebc0f0be9be4580c10fc373879c5773d3e1e9b43af057a987ef6827c578b9067da845ccea9dee627cd15e50e"
+    },
+    {
+      "name": "refresh_explicit_empty_target_id",
+      "fields": {
+        "action": "refresh",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 1762560000,
+        "target_device_id": ""
+      },
+      "message_cbor_hex": "87776d6f72657461672f6465766963652d70726f6f662f76316772656672657368782461636435353536322d663861392d323934362d346534392d616433646236323264636364782464396634623764322d316439632d653532612d643365632d3464626431343562643563371a690e88006040",
+      "signature_hex": "7a354114792625115a8dbc4273f567fd09154497e103a0531b6c9446319251d1af6358ee7b8f5e7bde9f83ebab56daf43bb8337ea9e065f01150103264be9205"
+    },
+    {
+      "name": "refresh_explicit_empty_target_key",
+      "fields": {
+        "action": "refresh",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 1762560000,
+        "target_ik_sig_pub_hex": ""
+      },
+      "message_cbor_hex": "87776d6f72657461672f6465766963652d70726f6f662f76316772656672657368782461636435353536322d663861392d323934362d346534392d616433646236323264636364782464396634623764322d316439632d653532612d643365632d3464626431343562643563371a690e88006040",
+      "signature_hex": "7a354114792625115a8dbc4273f567fd09154497e103a0531b6c9446319251d1af6358ee7b8f5e7bde9f83ebab56daf43bb8337ea9e065f01150103264be9205"
     },
     {
       "name": "remove_issued_at_0",
@@ -688,6 +727,91 @@
       },
       "signature_hex": "4971505e46170014e0df0a5785b75be545c71b69ebc0f0be9be4580c10fc373879c5773d3e1e9b43af057a987ef6827c578b9067da845ccea9dee627cd15e50e",
       "expect": "bad_signature"
+    },
+    {
+      "name": "small_order_identity_key",
+      "base": "reset",
+      "verifier": {
+        "fields": {},
+        "signer": "identity_point",
+        "signer_ik_sig_public_hex": "0100000000000000000000000000000000000000000000000000000000000000",
+        "now_s": 1762560000
+      },
+      "signature_hex": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "expect": "bad_signature",
+      "note": "acting key = identity point (y = 1); R = the key encoding, S = 0: a cofactored (ZIP-215) verifier accepts it for any message"
+    },
+    {
+      "name": "small_order_order8_key",
+      "base": "reset",
+      "verifier": {
+        "fields": {},
+        "signer": "order8_point",
+        "signer_ik_sig_public_hex": "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+        "now_s": 1762560000
+      },
+      "signature_hex": "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a0000000000000000000000000000000000000000000000000000000000000000",
+      "expect": "bad_signature",
+      "note": "acting key = an order-8 point (libsodium blocklist; Chalkias et al. 2020, \"Taming the many EdDSAs\"), order recomputed by the generator; R = the key encoding, S = 0: a cofactored (ZIP-215) verifier accepts it for any message"
+    },
+    {
+      "name": "noncanonical_identity_key",
+      "base": "reset",
+      "verifier": {
+        "fields": {},
+        "signer": "noncanonical_identity",
+        "signer_ik_sig_public_hex": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "now_s": 1762560000
+      },
+      "signature_hex": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "expect": "bad_signature",
+      "note": "acting key = the identity with y = p + 1 (non-canonical, RFC 8032 §5.1.3 refuses y >= p); signature R = canonical identity, S = 0"
+    }
+  ],
+  "verify_refusals": [
+    {
+      "name": "now_negative",
+      "base": "reset",
+      "verifier": {
+        "fields": {},
+        "signer_ik_sig_public_hex": "4ff3200238d3be81868f9f966331041eb5998a5c9a7de7ada369c439583aee52",
+        "now_s": -1
+      },
+      "signature_hex": "445b0e753197ac1dc3d7222bb09c6b8508617449f59d639e183124f2fd7c20978034bb58f632634113eefd59ddeb1f0e34b0a3bb9ed1c0486c2807b041a4420a",
+      "expect": "type_error"
+    },
+    {
+      "name": "now_fraction",
+      "base": "reset",
+      "verifier": {
+        "fields": {},
+        "signer_ik_sig_public_hex": "4ff3200238d3be81868f9f966331041eb5998a5c9a7de7ada369c439583aee52",
+        "now_s": 1.5
+      },
+      "signature_hex": "445b0e753197ac1dc3d7222bb09c6b8508617449f59d639e183124f2fd7c20978034bb58f632634113eefd59ddeb1f0e34b0a3bb9ed1c0486c2807b041a4420a",
+      "expect": "type_error"
+    },
+    {
+      "name": "now_2_pow_53",
+      "base": "reset",
+      "verifier": {
+        "fields": {},
+        "signer_ik_sig_public_hex": "4ff3200238d3be81868f9f966331041eb5998a5c9a7de7ada369c439583aee52",
+        "now_s": 9007199254740992
+      },
+      "signature_hex": "445b0e753197ac1dc3d7222bb09c6b8508617449f59d639e183124f2fd7c20978034bb58f632634113eefd59ddeb1f0e34b0a3bb9ed1c0486c2807b041a4420a",
+      "expect": "type_error"
+    },
+    {
+      "name": "acting_key_31_bytes",
+      "base": "reset",
+      "verifier": {
+        "fields": {},
+        "signer_ik_sig_public_hex": "4ff3200238d3be81868f9f966331041eb5998a5c9a7de7ada369c439583aee",
+        "now_s": 1762560000
+      },
+      "signature_hex": "445b0e753197ac1dc3d7222bb09c6b8508617449f59d639e183124f2fd7c20978034bb58f632634113eefd59ddeb1f0e34b0a3bb9ed1c0486c2807b041a4420a",
+      "expect": "type_error"
     }
   ],
   "refusals": [
@@ -947,6 +1071,41 @@
         "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
         "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
         "issued_at_s": "1762560000"
+      },
+      "expect": "type_error"
+    },
+    {
+      "name": "remove_empty_target_id",
+      "fields": {
+        "action": "remove",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 1762560000,
+        "target_device_id": ""
+      },
+      "expect": "type_error"
+    },
+    {
+      "name": "approve_empty_target_id",
+      "fields": {
+        "action": "approve",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 1762560000,
+        "target_device_id": "",
+        "target_ik_sig_pub_hex": "c62eab77fb19b34f45e444d355d2d2401e71f75d03a699c3e38220d969d494a3"
+      },
+      "expect": "type_error"
+    },
+    {
+      "name": "approve_empty_target_key",
+      "fields": {
+        "action": "approve",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 1762560000,
+        "target_device_id": "5b384f92-786f-79f8-044b-80c32123f006",
+        "target_ik_sig_pub_hex": ""
       },
       "expect": "type_error"
     }

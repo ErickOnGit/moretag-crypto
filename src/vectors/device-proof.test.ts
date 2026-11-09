@@ -119,6 +119,23 @@ for (const provider of PROVIDERS) {
   });
 }
 
+it("every verifier refusal throws a TypeError", () => {
+  expect(PROOF.verify_refusals.length).toBeGreaterThanOrEqual(4);
+  for (const r of PROOF.verify_refusals) {
+    const base = caseNamed(r.base);
+    expect(
+      () =>
+        verifyDeviceProof({
+          fields: libraryFields(withOverrides(base.fields, r.verifier.fields ?? {})),
+          acting_ik_sig_pub32: unhex(r.verifier.signer_ik_sig_public_hex),
+          proof_sig64: unhex(r.signature_hex ?? base.signature_hex),
+          now_s: r.verifier.now_s,
+        }),
+      r.name
+    ).toThrow(TypeError);
+  }
+});
+
 it("every build refusal throws its kind, and the verifier refuses the same fields", () => {
   const key = unhex(PROOF.parties.acting.ik_sig_public_hex);
   for (const r of PROOF.refusals) {
