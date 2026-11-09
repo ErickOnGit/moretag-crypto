@@ -21,7 +21,8 @@ Fixes land in the latest 3.x release only.
 - X3DH and the Double Ratchet as `docs/SPEC.md` describes them: X25519,
   Ed25519, HKDF-SHA256, XChaCha20-Poly1305, the 164-byte associated data and the
   CBOR header array.
-- The signed-prekey and one-time prekey batch signature messages.
+- The signed-prekey and one-time prekey batch signature messages, the device
+  proof and the pairing code.
 - The prekey manager, the identity registry, the session stores
   (`InMemoryRatchetStore`, `FileRatchetStore`) and the (de)serializers.
 - Local seals (`sealLocalV2`) and attachment encryption (`sealAttachmentV1`,

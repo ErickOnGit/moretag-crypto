@@ -1,0 +1,954 @@
+{
+  "about": "Device proof vectors, docs/SPEC.md §4.5: Ed25519 (RFC 8032) by the acting device's IKsig over the shortest-form CBOR array [\"moretag/device-proof/v1\", action, acting_device_id, session_id, issued_at_s, target_device_id, target_ik_sig_pub]. A field absent from `fields` goes on the wire as \"\" (text) or the empty byte string. In `verify`, `verifier.fields` overrides the base case's fields (null removes a field), `signer` names the party whose IKsig public key the verifier uses as the acting device's stored key, and `signature_hex` is the signature checked. Written independently by scripts/gen-vectors-device-v1.mjs from the spec and public texts only.",
+  "domain": "moretag/device-proof/v1",
+  "params": {
+    "secret_rule": "secret(label) = SHA-256(UTF-8(\"moretag-crypto/vectors/device/v1/\" || label))",
+    "uuid_rule": "uuid(label) = first 16 bytes of secret(label), printed canonical lowercase 8-4-4-4-12; no version or variant bits set (SPEC §3: not checked)",
+    "ed25519_rule": "an Ed25519 seed is a 32-byte secret; public key per RFC 8032 §5.1.5",
+    "proof_domain": "moretag/device-proof/v1",
+    "code_domain": "moretag/device-code/v1",
+    "max_skew_s": 300,
+    "readings": [
+      "R1. Absent target fields: for remove/reset/refresh \"every other action: empty (0 bytes)\" and for reset/refresh target_device_id \"\" (§4.5 table). A field omitted from `fields` is put on the wire as the text \"\" or the empty byte string.",
+      "R2. Reset or refresh given an explicit target_device_id \"\" (§4.5 table: \"`reset`, `refresh`: `\\\"\\\"`\"): this is exactly the field value the table prescribes, so it is not an \"extra target\"; it builds the same bytes as an absent one. It is a valid case, not a refusal.",
+      "R3. \"a session id that is not a canonical UUID ... is a `TypeError`\": the session id refuses with type_error, never invalid_device_id (it is not a device id).",
+      "R4. \"a device id that is not canonical is `invalid_device_id`\" covers both acting_device_id and target_device_id when a non-empty target id is given where one is required (approve, remove).",
+      "R5. issued_at_s must be a JSON/JS number that is a safe integer >= 0; a string, a fraction, a negative number or 2^53 is type_error. Times of 2^32 and above use the 8-byte CBOR head (§2: \"integers of 2^32 and above as integers\").",
+      "R6. Pairing code input: the UTF-8 bytes of \"moretag/device-code/v1\" directly followed by the 32 raw IKsig bytes, no separator or length prefix; the IKsig must be exactly 32 bytes, else type_error.",
+      "R7. Verification rebuilds the message from the verifier fields; a signature of any length other than 64 is bad_signature (not a TypeError), and the signature is checked before the time, so a bad and stale proof is bad_signature.",
+      "R8. The target key for approve is checked only for length (32 bytes), not as a curve point; §4.5 states only the length."
+    ]
+  },
+  "parties": {
+    "acting": {
+      "device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+      "device_id_label": "party/acting/device_id",
+      "ik_sig_seed_label": "party/acting/ik_sig_seed",
+      "ik_sig_seed_hex": "b77f0ccfa57bb6cccb879b7df8256a5f935d6600fad269ad607c12ec93333053",
+      "ik_sig_public_hex": "4ff3200238d3be81868f9f966331041eb5998a5c9a7de7ada369c439583aee52"
+    },
+    "target": {
+      "device_id": "5b384f92-786f-79f8-044b-80c32123f006",
+      "device_id_label": "party/target/device_id",
+      "ik_sig_seed_label": "party/target/ik_sig_seed",
+      "ik_sig_seed_hex": "0814c7fc09e08bc4267bf5cb0d5b712478c61729749ad1e4b8a628d56fc7c70b",
+      "ik_sig_public_hex": "c62eab77fb19b34f45e444d355d2d2401e71f75d03a699c3e38220d969d494a3"
+    },
+    "other": {
+      "device_id": "8f7bab0b-e38e-aaa3-35a8-a5064ee68904",
+      "device_id_label": "party/other/device_id",
+      "ik_sig_seed_label": "party/other/ik_sig_seed",
+      "ik_sig_seed_hex": "1955553f874896d3ff632f550013c3a4d40aca4fb15394504650b59838ee032f",
+      "ik_sig_public_hex": "b659c5a9db5918cbe9d6c404d1b1661de186dd965a70a944dd66d3cc7d8e021a"
+    },
+    "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+    "session_id_label": "session/main",
+    "other_session_id": "a70e2428-43a7-3eda-07d1-87fe51196f6d",
+    "other_session_id_label": "session/other"
+  },
+  "valid": [
+    {
+      "name": "approve",
+      "fields": {
+        "action": "approve",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 1762560000,
+        "target_device_id": "5b384f92-786f-79f8-044b-80c32123f006",
+        "target_ik_sig_pub_hex": "c62eab77fb19b34f45e444d355d2d2401e71f75d03a699c3e38220d969d494a3"
+      },
+      "message_cbor_hex": "87776d6f72657461672f6465766963652d70726f6f662f763167617070726f7665782461636435353536322d663861392d323934362d346534392d616433646236323264636364782464396634623764322d316439632d653532612d643365632d3464626431343562643563371a690e8800782435623338346639322d373836662d373966382d303434622d3830633332313233663030365820c62eab77fb19b34f45e444d355d2d2401e71f75d03a699c3e38220d969d494a3",
+      "signature_hex": "a8e545c23c7677635ceb8d28ea36284d43d874fbdce26a47d2d9d97cc1a7579ed5aee60086ab8d4fdac953a162bccd7d250db4ee3e7d8d693b947e08dc193b0b",
+      "message_parts_hex": [
+        {
+          "part": "array(7)",
+          "hex": "87"
+        },
+        {
+          "part": "domain",
+          "hex": "776d6f72657461672f6465766963652d70726f6f662f7631"
+        },
+        {
+          "part": "action",
+          "hex": "67617070726f7665"
+        },
+        {
+          "part": "acting_device_id",
+          "hex": "782461636435353536322d663861392d323934362d346534392d616433646236323264636364"
+        },
+        {
+          "part": "session_id",
+          "hex": "782464396634623764322d316439632d653532612d643365632d346462643134356264356337"
+        },
+        {
+          "part": "issued_at_s",
+          "hex": "1a690e8800"
+        },
+        {
+          "part": "target_device_id",
+          "hex": "782435623338346639322d373836662d373966382d303434622d383063333231323366303036"
+        },
+        {
+          "part": "target_ik_sig_pub",
+          "hex": "5820c62eab77fb19b34f45e444d355d2d2401e71f75d03a699c3e38220d969d494a3"
+        }
+      ]
+    },
+    {
+      "name": "remove",
+      "fields": {
+        "action": "remove",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 1762560000,
+        "target_device_id": "5b384f92-786f-79f8-044b-80c32123f006"
+      },
+      "message_cbor_hex": "87776d6f72657461672f6465766963652d70726f6f662f76316672656d6f7665782461636435353536322d663861392d323934362d346534392d616433646236323264636364782464396634623764322d316439632d653532612d643365632d3464626431343562643563371a690e8800782435623338346639322d373836662d373966382d303434622d38306333323132336630303640",
+      "signature_hex": "4971505e46170014e0df0a5785b75be545c71b69ebc0f0be9be4580c10fc373879c5773d3e1e9b43af057a987ef6827c578b9067da845ccea9dee627cd15e50e",
+      "message_parts_hex": [
+        {
+          "part": "array(7)",
+          "hex": "87"
+        },
+        {
+          "part": "domain",
+          "hex": "776d6f72657461672f6465766963652d70726f6f662f7631"
+        },
+        {
+          "part": "action",
+          "hex": "6672656d6f7665"
+        },
+        {
+          "part": "acting_device_id",
+          "hex": "782461636435353536322d663861392d323934362d346534392d616433646236323264636364"
+        },
+        {
+          "part": "session_id",
+          "hex": "782464396634623764322d316439632d653532612d643365632d346462643134356264356337"
+        },
+        {
+          "part": "issued_at_s",
+          "hex": "1a690e8800"
+        },
+        {
+          "part": "target_device_id",
+          "hex": "782435623338346639322d373836662d373966382d303434622d383063333231323366303036"
+        },
+        {
+          "part": "target_ik_sig_pub",
+          "hex": "40"
+        }
+      ]
+    },
+    {
+      "name": "reset",
+      "fields": {
+        "action": "reset",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 1762560000
+      },
+      "message_cbor_hex": "87776d6f72657461672f6465766963652d70726f6f662f7631657265736574782461636435353536322d663861392d323934362d346534392d616433646236323264636364782464396634623764322d316439632d653532612d643365632d3464626431343562643563371a690e88006040",
+      "signature_hex": "445b0e753197ac1dc3d7222bb09c6b8508617449f59d639e183124f2fd7c20978034bb58f632634113eefd59ddeb1f0e34b0a3bb9ed1c0486c2807b041a4420a",
+      "message_parts_hex": [
+        {
+          "part": "array(7)",
+          "hex": "87"
+        },
+        {
+          "part": "domain",
+          "hex": "776d6f72657461672f6465766963652d70726f6f662f7631"
+        },
+        {
+          "part": "action",
+          "hex": "657265736574"
+        },
+        {
+          "part": "acting_device_id",
+          "hex": "782461636435353536322d663861392d323934362d346534392d616433646236323264636364"
+        },
+        {
+          "part": "session_id",
+          "hex": "782464396634623764322d316439632d653532612d643365632d346462643134356264356337"
+        },
+        {
+          "part": "issued_at_s",
+          "hex": "1a690e8800"
+        },
+        {
+          "part": "target_device_id",
+          "hex": "60"
+        },
+        {
+          "part": "target_ik_sig_pub",
+          "hex": "40"
+        }
+      ]
+    },
+    {
+      "name": "refresh",
+      "fields": {
+        "action": "refresh",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 1762560000
+      },
+      "message_cbor_hex": "87776d6f72657461672f6465766963652d70726f6f662f76316772656672657368782461636435353536322d663861392d323934362d346534392d616433646236323264636364782464396634623764322d316439632d653532612d643365632d3464626431343562643563371a690e88006040",
+      "signature_hex": "7a354114792625115a8dbc4273f567fd09154497e103a0531b6c9446319251d1af6358ee7b8f5e7bde9f83ebab56daf43bb8337ea9e065f01150103264be9205"
+    },
+    {
+      "name": "reset_explicit_empty_target_id",
+      "fields": {
+        "action": "reset",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 1762560000,
+        "target_device_id": ""
+      },
+      "message_cbor_hex": "87776d6f72657461672f6465766963652d70726f6f662f7631657265736574782461636435353536322d663861392d323934362d346534392d616433646236323264636364782464396634623764322d316439632d653532612d643365632d3464626431343562643563371a690e88006040",
+      "signature_hex": "445b0e753197ac1dc3d7222bb09c6b8508617449f59d639e183124f2fd7c20978034bb58f632634113eefd59ddeb1f0e34b0a3bb9ed1c0486c2807b041a4420a"
+    },
+    {
+      "name": "remove_issued_at_0",
+      "fields": {
+        "action": "remove",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 0,
+        "target_device_id": "5b384f92-786f-79f8-044b-80c32123f006"
+      },
+      "message_cbor_hex": "87776d6f72657461672f6465766963652d70726f6f662f76316672656d6f7665782461636435353536322d663861392d323934362d346534392d616433646236323264636364782464396634623764322d316439632d653532612d643365632d34646264313435626435633700782435623338346639322d373836662d373966382d303434622d38306333323132336630303640",
+      "signature_hex": "64f19703440e29f3937bf2e89f35c0f7366b788746bd8ff1bc3ffcb64f33954557af890aa835f180ee9a5003a4804fc977779b7f7506acf02eaa39587388fb0e"
+    },
+    {
+      "name": "reset_issued_at_23",
+      "fields": {
+        "action": "reset",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 23
+      },
+      "message_cbor_hex": "87776d6f72657461672f6465766963652d70726f6f662f7631657265736574782461636435353536322d663861392d323934362d346534392d616433646236323264636364782464396634623764322d316439632d653532612d643365632d346462643134356264356337176040",
+      "signature_hex": "eee56959bdb4db147da6c7da5aafda85978dce6595680d9388abffd573a3d50d960ff66cf8849e52e7ef79a94cd68deea9b20cf72e2ca1cb7580d3f9e0f35901"
+    },
+    {
+      "name": "remove_issued_at_24",
+      "fields": {
+        "action": "remove",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 24,
+        "target_device_id": "5b384f92-786f-79f8-044b-80c32123f006"
+      },
+      "message_cbor_hex": "87776d6f72657461672f6465766963652d70726f6f662f76316672656d6f7665782461636435353536322d663861392d323934362d346534392d616433646236323264636364782464396634623764322d316439632d653532612d643365632d3464626431343562643563371818782435623338346639322d373836662d373966382d303434622d38306333323132336630303640",
+      "signature_hex": "4393b7532c1fb0e5f81d358ee76d59ca6544654c3d3b8b168607d0adb7864c487aa37a1e1903303ca0be1e2688a21a454a784e11e8d62efb8262af6ea637a50c",
+      "message_parts_hex": [
+        {
+          "part": "array(7)",
+          "hex": "87"
+        },
+        {
+          "part": "domain",
+          "hex": "776d6f72657461672f6465766963652d70726f6f662f7631"
+        },
+        {
+          "part": "action",
+          "hex": "6672656d6f7665"
+        },
+        {
+          "part": "acting_device_id",
+          "hex": "782461636435353536322d663861392d323934362d346534392d616433646236323264636364"
+        },
+        {
+          "part": "session_id",
+          "hex": "782464396634623764322d316439632d653532612d643365632d346462643134356264356337"
+        },
+        {
+          "part": "issued_at_s",
+          "hex": "1818"
+        },
+        {
+          "part": "target_device_id",
+          "hex": "782435623338346639322d373836662d373966382d303434622d383063333231323366303036"
+        },
+        {
+          "part": "target_ik_sig_pub",
+          "hex": "40"
+        }
+      ]
+    },
+    {
+      "name": "reset_issued_at_255",
+      "fields": {
+        "action": "reset",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 255
+      },
+      "message_cbor_hex": "87776d6f72657461672f6465766963652d70726f6f662f7631657265736574782461636435353536322d663861392d323934362d346534392d616433646236323264636364782464396634623764322d316439632d653532612d643365632d34646264313435626435633718ff6040",
+      "signature_hex": "487dd511cb9ac93c3a25f80bb83c8441673c2f5e747688de2cb421dfd63451a791e3ce4a61fb63b5cdf2c04636614fd31fadc3eb29a8fa8db8be73bf8ff49f0b"
+    },
+    {
+      "name": "remove_issued_at_256",
+      "fields": {
+        "action": "remove",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 256,
+        "target_device_id": "5b384f92-786f-79f8-044b-80c32123f006"
+      },
+      "message_cbor_hex": "87776d6f72657461672f6465766963652d70726f6f662f76316672656d6f7665782461636435353536322d663861392d323934362d346534392d616433646236323264636364782464396634623764322d316439632d653532612d643365632d346462643134356264356337190100782435623338346639322d373836662d373966382d303434622d38306333323132336630303640",
+      "signature_hex": "7ce89bfa2a88aa92514d0ee3b4e11308b75aa0c8066b4787c65f060ba3228596e79648dd50d3f48b665a2c8fcb57e5f6037588415a12d65a1e1c905aa317eb08"
+    },
+    {
+      "name": "reset_issued_at_65535",
+      "fields": {
+        "action": "reset",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 65535
+      },
+      "message_cbor_hex": "87776d6f72657461672f6465766963652d70726f6f662f7631657265736574782461636435353536322d663861392d323934362d346534392d616433646236323264636364782464396634623764322d316439632d653532612d643365632d34646264313435626435633719ffff6040",
+      "signature_hex": "47175239b66f79f6a77ace25a129c3b36de5653370f2c0c2bab9ad34c3a39b8333a8b38e7712f834d6ae41bc03a66d1463dbb4a09f64e4eac819fda0be77b307"
+    },
+    {
+      "name": "remove_issued_at_65536",
+      "fields": {
+        "action": "remove",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 65536,
+        "target_device_id": "5b384f92-786f-79f8-044b-80c32123f006"
+      },
+      "message_cbor_hex": "87776d6f72657461672f6465766963652d70726f6f662f76316672656d6f7665782461636435353536322d663861392d323934362d346534392d616433646236323264636364782464396634623764322d316439632d653532612d643365632d3464626431343562643563371a00010000782435623338346639322d373836662d373966382d303434622d38306333323132336630303640",
+      "signature_hex": "51e51ead8ed0424432088215196fdeabf38a9c1b6e2a9069889d246deab95cda8445f82b73dcb2277dd40d95b6e872890b21ec171c411d1e821f8207749ed903"
+    },
+    {
+      "name": "reset_issued_at_4294967295",
+      "fields": {
+        "action": "reset",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 4294967295
+      },
+      "message_cbor_hex": "87776d6f72657461672f6465766963652d70726f6f662f7631657265736574782461636435353536322d663861392d323934362d346534392d616433646236323264636364782464396634623764322d316439632d653532612d643365632d3464626431343562643563371affffffff6040",
+      "signature_hex": "63c7e26e0ed83ebffd467e126f7cb417e1574981234c8a769c990104864072dad2997e2297df246d91e2fdc1780b56b37ade85cb4ffa27c41f29bc1efd3bb908"
+    },
+    {
+      "name": "remove_issued_at_4294967296",
+      "fields": {
+        "action": "remove",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 4294967296,
+        "target_device_id": "5b384f92-786f-79f8-044b-80c32123f006"
+      },
+      "message_cbor_hex": "87776d6f72657461672f6465766963652d70726f6f662f76316672656d6f7665782461636435353536322d663861392d323934362d346534392d616433646236323264636364782464396634623764322d316439632d653532612d643365632d3464626431343562643563371b0000000100000000782435623338346639322d373836662d373966382d303434622d38306333323132336630303640",
+      "signature_hex": "9e1bf5534c969b75452af1b299beff54ec6b16a3221ff02ae1196a77cc45e6ec7a6fe2d49e482c444795c653a82c19e9433884613f4b8a8dd9a66a5ffee0ff0d",
+      "message_parts_hex": [
+        {
+          "part": "array(7)",
+          "hex": "87"
+        },
+        {
+          "part": "domain",
+          "hex": "776d6f72657461672f6465766963652d70726f6f662f7631"
+        },
+        {
+          "part": "action",
+          "hex": "6672656d6f7665"
+        },
+        {
+          "part": "acting_device_id",
+          "hex": "782461636435353536322d663861392d323934362d346534392d616433646236323264636364"
+        },
+        {
+          "part": "session_id",
+          "hex": "782464396634623764322d316439632d653532612d643365632d346462643134356264356337"
+        },
+        {
+          "part": "issued_at_s",
+          "hex": "1b0000000100000000"
+        },
+        {
+          "part": "target_device_id",
+          "hex": "782435623338346639322d373836662d373966382d303434622d383063333231323366303036"
+        },
+        {
+          "part": "target_ik_sig_pub",
+          "hex": "40"
+        }
+      ]
+    },
+    {
+      "name": "reset_issued_at_9007199254740991",
+      "fields": {
+        "action": "reset",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 9007199254740991
+      },
+      "message_cbor_hex": "87776d6f72657461672f6465766963652d70726f6f662f7631657265736574782461636435353536322d663861392d323934362d346534392d616433646236323264636364782464396634623764322d316439632d653532612d643365632d3464626431343562643563371b001fffffffffffff6040",
+      "signature_hex": "8f696765a6f65bd933de56e6a6bf890990e9f0880c2207c149e4d9e6c58a4110c5eb79dd8e17ecc5df68f907e329c09bb209c8f044f045f6289b6579d1190b02"
+    }
+  ],
+  "verify": [
+    {
+      "name": "same_fields_now_equal",
+      "base": "approve",
+      "verifier": {
+        "fields": {},
+        "signer": "acting",
+        "signer_ik_sig_public_hex": "4ff3200238d3be81868f9f966331041eb5998a5c9a7de7ada369c439583aee52",
+        "now_s": 1762560000
+      },
+      "signature_hex": "a8e545c23c7677635ceb8d28ea36284d43d874fbdce26a47d2d9d97cc1a7579ed5aee60086ab8d4fdac953a162bccd7d250db4ee3e7d8d693b947e08dc193b0b",
+      "expect": "valid"
+    },
+    {
+      "name": "now_plus_300",
+      "base": "approve",
+      "verifier": {
+        "fields": {},
+        "signer": "acting",
+        "signer_ik_sig_public_hex": "4ff3200238d3be81868f9f966331041eb5998a5c9a7de7ada369c439583aee52",
+        "now_s": 1762560300
+      },
+      "signature_hex": "a8e545c23c7677635ceb8d28ea36284d43d874fbdce26a47d2d9d97cc1a7579ed5aee60086ab8d4fdac953a162bccd7d250db4ee3e7d8d693b947e08dc193b0b",
+      "expect": "valid"
+    },
+    {
+      "name": "now_minus_300",
+      "base": "approve",
+      "verifier": {
+        "fields": {},
+        "signer": "acting",
+        "signer_ik_sig_public_hex": "4ff3200238d3be81868f9f966331041eb5998a5c9a7de7ada369c439583aee52",
+        "now_s": 1762559700
+      },
+      "signature_hex": "a8e545c23c7677635ceb8d28ea36284d43d874fbdce26a47d2d9d97cc1a7579ed5aee60086ab8d4fdac953a162bccd7d250db4ee3e7d8d693b947e08dc193b0b",
+      "expect": "valid"
+    },
+    {
+      "name": "now_plus_301",
+      "base": "approve",
+      "verifier": {
+        "fields": {},
+        "signer": "acting",
+        "signer_ik_sig_public_hex": "4ff3200238d3be81868f9f966331041eb5998a5c9a7de7ada369c439583aee52",
+        "now_s": 1762560301
+      },
+      "signature_hex": "a8e545c23c7677635ceb8d28ea36284d43d874fbdce26a47d2d9d97cc1a7579ed5aee60086ab8d4fdac953a162bccd7d250db4ee3e7d8d693b947e08dc193b0b",
+      "expect": "expired"
+    },
+    {
+      "name": "now_minus_301",
+      "base": "approve",
+      "verifier": {
+        "fields": {},
+        "signer": "acting",
+        "signer_ik_sig_public_hex": "4ff3200238d3be81868f9f966331041eb5998a5c9a7de7ada369c439583aee52",
+        "now_s": 1762559699
+      },
+      "signature_hex": "a8e545c23c7677635ceb8d28ea36284d43d874fbdce26a47d2d9d97cc1a7579ed5aee60086ab8d4fdac953a162bccd7d250db4ee3e7d8d693b947e08dc193b0b",
+      "expect": "expired"
+    },
+    {
+      "name": "reset_now_plus_301",
+      "base": "reset",
+      "verifier": {
+        "fields": {},
+        "signer": "acting",
+        "signer_ik_sig_public_hex": "4ff3200238d3be81868f9f966331041eb5998a5c9a7de7ada369c439583aee52",
+        "now_s": 1762560301
+      },
+      "signature_hex": "445b0e753197ac1dc3d7222bb09c6b8508617449f59d639e183124f2fd7c20978034bb58f632634113eefd59ddeb1f0e34b0a3bb9ed1c0486c2807b041a4420a",
+      "expect": "expired"
+    },
+    {
+      "name": "max_time_valid",
+      "base": "reset_issued_at_9007199254740991",
+      "verifier": {
+        "fields": {},
+        "signer": "acting",
+        "signer_ik_sig_public_hex": "4ff3200238d3be81868f9f966331041eb5998a5c9a7de7ada369c439583aee52",
+        "now_s": 9007199254740691
+      },
+      "signature_hex": "8f696765a6f65bd933de56e6a6bf890990e9f0880c2207c149e4d9e6c58a4110c5eb79dd8e17ecc5df68f907e329c09bb209c8f044f045f6289b6579d1190b02",
+      "expect": "valid"
+    },
+    {
+      "name": "other_session",
+      "base": "approve",
+      "verifier": {
+        "fields": {
+          "session_id": "a70e2428-43a7-3eda-07d1-87fe51196f6d"
+        },
+        "signer": "acting",
+        "signer_ik_sig_public_hex": "4ff3200238d3be81868f9f966331041eb5998a5c9a7de7ada369c439583aee52",
+        "now_s": 1762560000
+      },
+      "signature_hex": "a8e545c23c7677635ceb8d28ea36284d43d874fbdce26a47d2d9d97cc1a7579ed5aee60086ab8d4fdac953a162bccd7d250db4ee3e7d8d693b947e08dc193b0b",
+      "expect": "bad_signature"
+    },
+    {
+      "name": "other_action_remove_for_approve",
+      "base": "approve",
+      "verifier": {
+        "fields": {
+          "action": "remove",
+          "target_ik_sig_pub_hex": null
+        },
+        "signer": "acting",
+        "signer_ik_sig_public_hex": "4ff3200238d3be81868f9f966331041eb5998a5c9a7de7ada369c439583aee52",
+        "now_s": 1762560000
+      },
+      "signature_hex": "a8e545c23c7677635ceb8d28ea36284d43d874fbdce26a47d2d9d97cc1a7579ed5aee60086ab8d4fdac953a162bccd7d250db4ee3e7d8d693b947e08dc193b0b",
+      "expect": "bad_signature"
+    },
+    {
+      "name": "other_action_refresh_for_reset",
+      "base": "reset",
+      "verifier": {
+        "fields": {
+          "action": "refresh"
+        },
+        "signer": "acting",
+        "signer_ik_sig_public_hex": "4ff3200238d3be81868f9f966331041eb5998a5c9a7de7ada369c439583aee52",
+        "now_s": 1762560000
+      },
+      "signature_hex": "445b0e753197ac1dc3d7222bb09c6b8508617449f59d639e183124f2fd7c20978034bb58f632634113eefd59ddeb1f0e34b0a3bb9ed1c0486c2807b041a4420a",
+      "expect": "bad_signature"
+    },
+    {
+      "name": "other_acting_device_id",
+      "base": "approve",
+      "verifier": {
+        "fields": {
+          "acting_device_id": "8f7bab0b-e38e-aaa3-35a8-a5064ee68904"
+        },
+        "signer": "acting",
+        "signer_ik_sig_public_hex": "4ff3200238d3be81868f9f966331041eb5998a5c9a7de7ada369c439583aee52",
+        "now_s": 1762560000
+      },
+      "signature_hex": "a8e545c23c7677635ceb8d28ea36284d43d874fbdce26a47d2d9d97cc1a7579ed5aee60086ab8d4fdac953a162bccd7d250db4ee3e7d8d693b947e08dc193b0b",
+      "expect": "bad_signature"
+    },
+    {
+      "name": "other_target_id_approve",
+      "base": "approve",
+      "verifier": {
+        "fields": {
+          "target_device_id": "8f7bab0b-e38e-aaa3-35a8-a5064ee68904"
+        },
+        "signer": "acting",
+        "signer_ik_sig_public_hex": "4ff3200238d3be81868f9f966331041eb5998a5c9a7de7ada369c439583aee52",
+        "now_s": 1762560000
+      },
+      "signature_hex": "a8e545c23c7677635ceb8d28ea36284d43d874fbdce26a47d2d9d97cc1a7579ed5aee60086ab8d4fdac953a162bccd7d250db4ee3e7d8d693b947e08dc193b0b",
+      "expect": "bad_signature"
+    },
+    {
+      "name": "other_target_id_remove",
+      "base": "remove",
+      "verifier": {
+        "fields": {
+          "target_device_id": "8f7bab0b-e38e-aaa3-35a8-a5064ee68904"
+        },
+        "signer": "acting",
+        "signer_ik_sig_public_hex": "4ff3200238d3be81868f9f966331041eb5998a5c9a7de7ada369c439583aee52",
+        "now_s": 1762560000
+      },
+      "signature_hex": "4971505e46170014e0df0a5785b75be545c71b69ebc0f0be9be4580c10fc373879c5773d3e1e9b43af057a987ef6827c578b9067da845ccea9dee627cd15e50e",
+      "expect": "bad_signature"
+    },
+    {
+      "name": "other_target_key_approve",
+      "base": "approve",
+      "verifier": {
+        "fields": {
+          "target_ik_sig_pub_hex": "b659c5a9db5918cbe9d6c404d1b1661de186dd965a70a944dd66d3cc7d8e021a"
+        },
+        "signer": "acting",
+        "signer_ik_sig_public_hex": "4ff3200238d3be81868f9f966331041eb5998a5c9a7de7ada369c439583aee52",
+        "now_s": 1762560000
+      },
+      "signature_hex": "a8e545c23c7677635ceb8d28ea36284d43d874fbdce26a47d2d9d97cc1a7579ed5aee60086ab8d4fdac953a162bccd7d250db4ee3e7d8d693b947e08dc193b0b",
+      "expect": "bad_signature"
+    },
+    {
+      "name": "other_time",
+      "base": "reset",
+      "verifier": {
+        "fields": {
+          "issued_at_s": 1762560001
+        },
+        "signer": "acting",
+        "signer_ik_sig_public_hex": "4ff3200238d3be81868f9f966331041eb5998a5c9a7de7ada369c439583aee52",
+        "now_s": 1762560000
+      },
+      "signature_hex": "445b0e753197ac1dc3d7222bb09c6b8508617449f59d639e183124f2fd7c20978034bb58f632634113eefd59ddeb1f0e34b0a3bb9ed1c0486c2807b041a4420a",
+      "expect": "bad_signature"
+    },
+    {
+      "name": "key_of_other_device",
+      "base": "approve",
+      "verifier": {
+        "fields": {},
+        "signer": "other",
+        "signer_ik_sig_public_hex": "b659c5a9db5918cbe9d6c404d1b1661de186dd965a70a944dd66d3cc7d8e021a",
+        "now_s": 1762560000
+      },
+      "signature_hex": "a8e545c23c7677635ceb8d28ea36284d43d874fbdce26a47d2d9d97cc1a7579ed5aee60086ab8d4fdac953a162bccd7d250db4ee3e7d8d693b947e08dc193b0b",
+      "expect": "bad_signature"
+    },
+    {
+      "name": "key_of_target_device",
+      "base": "approve",
+      "verifier": {
+        "fields": {},
+        "signer": "target",
+        "signer_ik_sig_public_hex": "c62eab77fb19b34f45e444d355d2d2401e71f75d03a699c3e38220d969d494a3",
+        "now_s": 1762560000
+      },
+      "signature_hex": "a8e545c23c7677635ceb8d28ea36284d43d874fbdce26a47d2d9d97cc1a7579ed5aee60086ab8d4fdac953a162bccd7d250db4ee3e7d8d693b947e08dc193b0b",
+      "expect": "bad_signature"
+    },
+    {
+      "name": "flipped_signature_bit",
+      "base": "approve",
+      "verifier": {
+        "fields": {},
+        "signer": "acting",
+        "signer_ik_sig_public_hex": "4ff3200238d3be81868f9f966331041eb5998a5c9a7de7ada369c439583aee52",
+        "now_s": 1762560000
+      },
+      "signature_hex": "a8e545c23c7677635ceb8c28ea36284d43d874fbdce26a47d2d9d97cc1a7579ed5aee60086ab8d4fdac953a162bccd7d250db4ee3e7d8d693b947e08dc193b0b",
+      "expect": "bad_signature"
+    },
+    {
+      "name": "signature_63_bytes",
+      "base": "approve",
+      "verifier": {
+        "fields": {},
+        "signer": "acting",
+        "signer_ik_sig_public_hex": "4ff3200238d3be81868f9f966331041eb5998a5c9a7de7ada369c439583aee52",
+        "now_s": 1762560000
+      },
+      "signature_hex": "a8e545c23c7677635ceb8d28ea36284d43d874fbdce26a47d2d9d97cc1a7579ed5aee60086ab8d4fdac953a162bccd7d250db4ee3e7d8d693b947e08dc193b",
+      "expect": "bad_signature"
+    },
+    {
+      "name": "signature_65_bytes",
+      "base": "approve",
+      "verifier": {
+        "fields": {},
+        "signer": "acting",
+        "signer_ik_sig_public_hex": "4ff3200238d3be81868f9f966331041eb5998a5c9a7de7ada369c439583aee52",
+        "now_s": 1762560000
+      },
+      "signature_hex": "a8e545c23c7677635ceb8d28ea36284d43d874fbdce26a47d2d9d97cc1a7579ed5aee60086ab8d4fdac953a162bccd7d250db4ee3e7d8d693b947e08dc193b0b00",
+      "expect": "bad_signature"
+    },
+    {
+      "name": "signature_empty",
+      "base": "reset",
+      "verifier": {
+        "fields": {},
+        "signer": "acting",
+        "signer_ik_sig_public_hex": "4ff3200238d3be81868f9f966331041eb5998a5c9a7de7ada369c439583aee52",
+        "now_s": 1762560000
+      },
+      "signature_hex": "",
+      "expect": "bad_signature"
+    },
+    {
+      "name": "bad_signature_and_stale",
+      "base": "approve",
+      "verifier": {
+        "fields": {},
+        "signer": "acting",
+        "signer_ik_sig_public_hex": "4ff3200238d3be81868f9f966331041eb5998a5c9a7de7ada369c439583aee52",
+        "now_s": 1762560301
+      },
+      "signature_hex": "a8e545c23c7677635ceb8c28ea36284d43d874fbdce26a47d2d9d97cc1a7579ed5aee60086ab8d4fdac953a162bccd7d250db4ee3e7d8d693b947e08dc193b0b",
+      "expect": "bad_signature"
+    },
+    {
+      "name": "remove_checked_as_reset",
+      "base": "remove",
+      "verifier": {
+        "fields": {
+          "action": "reset",
+          "target_device_id": null
+        },
+        "signer": "acting",
+        "signer_ik_sig_public_hex": "4ff3200238d3be81868f9f966331041eb5998a5c9a7de7ada369c439583aee52",
+        "now_s": 1762560000
+      },
+      "signature_hex": "4971505e46170014e0df0a5785b75be545c71b69ebc0f0be9be4580c10fc373879c5773d3e1e9b43af057a987ef6827c578b9067da845ccea9dee627cd15e50e",
+      "expect": "bad_signature"
+    }
+  ],
+  "refusals": [
+    {
+      "name": "uppercase_acting_id",
+      "fields": {
+        "action": "reset",
+        "acting_device_id": "ACD55562-F8A9-2946-4E49-AD3DB622DCCD",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 1762560000
+      },
+      "expect": "invalid_device_id"
+    },
+    {
+      "name": "uppercase_target_id",
+      "fields": {
+        "action": "approve",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 1762560000,
+        "target_device_id": "5B384F92-786F-79F8-044B-80C32123F006",
+        "target_ik_sig_pub_hex": "c62eab77fb19b34f45e444d355d2d2401e71f75d03a699c3e38220d969d494a3"
+      },
+      "expect": "invalid_device_id"
+    },
+    {
+      "name": "uppercase_target_id_remove",
+      "fields": {
+        "action": "remove",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 1762560000,
+        "target_device_id": "5B384F92-786F-79F8-044B-80C32123F006"
+      },
+      "expect": "invalid_device_id"
+    },
+    {
+      "name": "acting_id_without_hyphens",
+      "fields": {
+        "action": "reset",
+        "acting_device_id": "acd55562f8a929464e49ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 1762560000
+      },
+      "expect": "invalid_device_id"
+    },
+    {
+      "name": "acting_id_braced",
+      "fields": {
+        "action": "reset",
+        "acting_device_id": "{acd55562-f8a9-2946-4e49-ad3db622dccd}",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 1762560000
+      },
+      "expect": "invalid_device_id"
+    },
+    {
+      "name": "session_id_uppercase",
+      "fields": {
+        "action": "reset",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "D9F4B7D2-1D9C-E52A-D3EC-4DBD145BD5C7",
+        "issued_at_s": 1762560000
+      },
+      "expect": "type_error"
+    },
+    {
+      "name": "session_id_not_uuid",
+      "fields": {
+        "action": "reset",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "not-a-session",
+        "issued_at_s": 1762560000
+      },
+      "expect": "type_error"
+    },
+    {
+      "name": "unknown_action_Approve",
+      "fields": {
+        "action": "Approve",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 1762560000,
+        "target_device_id": "5b384f92-786f-79f8-044b-80c32123f006",
+        "target_ik_sig_pub_hex": "c62eab77fb19b34f45e444d355d2d2401e71f75d03a699c3e38220d969d494a3"
+      },
+      "expect": "type_error"
+    },
+    {
+      "name": "unknown_action_sign_out_others",
+      "fields": {
+        "action": "sign_out_others",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 1762560000
+      },
+      "expect": "type_error"
+    },
+    {
+      "name": "approve_without_target_key",
+      "fields": {
+        "action": "approve",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 1762560000,
+        "target_device_id": "5b384f92-786f-79f8-044b-80c32123f006"
+      },
+      "expect": "type_error"
+    },
+    {
+      "name": "approve_target_key_31_bytes",
+      "fields": {
+        "action": "approve",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 1762560000,
+        "target_device_id": "5b384f92-786f-79f8-044b-80c32123f006",
+        "target_ik_sig_pub_hex": "c62eab77fb19b34f45e444d355d2d2401e71f75d03a699c3e38220d969d494"
+      },
+      "expect": "type_error"
+    },
+    {
+      "name": "approve_target_key_33_bytes",
+      "fields": {
+        "action": "approve",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 1762560000,
+        "target_device_id": "5b384f92-786f-79f8-044b-80c32123f006",
+        "target_ik_sig_pub_hex": "c62eab77fb19b34f45e444d355d2d2401e71f75d03a699c3e38220d969d494a300"
+      },
+      "expect": "type_error"
+    },
+    {
+      "name": "approve_without_target_id",
+      "fields": {
+        "action": "approve",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 1762560000,
+        "target_ik_sig_pub_hex": "c62eab77fb19b34f45e444d355d2d2401e71f75d03a699c3e38220d969d494a3"
+      },
+      "expect": "type_error"
+    },
+    {
+      "name": "approve_of_acting_device",
+      "fields": {
+        "action": "approve",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 1762560000,
+        "target_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "target_ik_sig_pub_hex": "4ff3200238d3be81868f9f966331041eb5998a5c9a7de7ada369c439583aee52"
+      },
+      "expect": "type_error"
+    },
+    {
+      "name": "remove_with_target_key",
+      "fields": {
+        "action": "remove",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 1762560000,
+        "target_device_id": "5b384f92-786f-79f8-044b-80c32123f006",
+        "target_ik_sig_pub_hex": "c62eab77fb19b34f45e444d355d2d2401e71f75d03a699c3e38220d969d494a3"
+      },
+      "expect": "type_error"
+    },
+    {
+      "name": "remove_without_target_id",
+      "fields": {
+        "action": "remove",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 1762560000
+      },
+      "expect": "type_error"
+    },
+    {
+      "name": "reset_with_target_id",
+      "fields": {
+        "action": "reset",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 1762560000,
+        "target_device_id": "5b384f92-786f-79f8-044b-80c32123f006"
+      },
+      "expect": "type_error"
+    },
+    {
+      "name": "reset_with_target_key",
+      "fields": {
+        "action": "reset",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 1762560000,
+        "target_ik_sig_pub_hex": "c62eab77fb19b34f45e444d355d2d2401e71f75d03a699c3e38220d969d494a3"
+      },
+      "expect": "type_error"
+    },
+    {
+      "name": "refresh_with_target_key",
+      "fields": {
+        "action": "refresh",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 1762560000,
+        "target_ik_sig_pub_hex": "c62eab77fb19b34f45e444d355d2d2401e71f75d03a699c3e38220d969d494a3"
+      },
+      "expect": "type_error"
+    },
+    {
+      "name": "refresh_with_target_id",
+      "fields": {
+        "action": "refresh",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 1762560000,
+        "target_device_id": "5b384f92-786f-79f8-044b-80c32123f006"
+      },
+      "expect": "type_error"
+    },
+    {
+      "name": "issued_at_negative",
+      "fields": {
+        "action": "reset",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": -1
+      },
+      "expect": "type_error"
+    },
+    {
+      "name": "issued_at_fraction",
+      "fields": {
+        "action": "reset",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 1.5
+      },
+      "expect": "type_error"
+    },
+    {
+      "name": "issued_at_2_pow_53",
+      "fields": {
+        "action": "reset",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": 9007199254740992
+      },
+      "expect": "type_error"
+    },
+    {
+      "name": "issued_at_string",
+      "fields": {
+        "action": "reset",
+        "acting_device_id": "acd55562-f8a9-2946-4e49-ad3db622dccd",
+        "session_id": "d9f4b7d2-1d9c-e52a-d3ec-4dbd145bd5c7",
+        "issued_at_s": "1762560000"
+      },
+      "expect": "type_error"
+    }
+  ]
+}

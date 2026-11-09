@@ -177,3 +177,16 @@ export {
   type X3DHPrekeyManagerStateV2,
 } from "./x3dh/prekey-manager.js";
 export { x3dhInitiatorBootstrapV2, x3dhResponderBootstrapV2 } from "./x3dh/session.js";
+
+// Device proof and pairing code (SPEC §4.5)
+export {
+  DEVICE_PROOF_DOMAIN,
+  DEVICE_CODE_DOMAIN,
+  DEVICE_PROOF_MAX_SKEW_S,
+  buildDeviceProofMessage,
+  verifyDeviceProof,
+  deviceCode,
+  type DeviceProofAction,
+  type DeviceProofFields,
+  type DeviceProofVerdict,
+} from "./crypto/device-proof.js";

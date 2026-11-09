@@ -39,7 +39,7 @@
 | Stolen | What the attacker gains | Residual |
 |---|---|---|
 | IK alone | Can initiate as the victim to anyone and present the victim's public IKsig (nothing proves possession of it). Cannot act as responder. No past sessions | Impersonation to others until the device is removed |
-| IKsig alone | No confidentiality, but full **control-plane authority**: it signs signed prekeys, one-time prekey batches and, later, device proofs | A concentration of risk; device proofs must cover it |
+| IKsig alone | No confidentiality, but full **control-plane authority**: it signs signed prekeys, one-time prekey batches and device proofs (SPEC §4.5), so it can approve, remove or reset the victim's devices from a session of theirs | A concentration of risk: the host's server binds each proof to a session, a target and ±300 s, and a session is still needed |
 | A signed prekey | **Key-compromise impersonation** against the victim on setups naming that id, for as long as the key is held: the current one, and a replaced one for 30 days after the server confirms its successor (30 to 37 days in all with weekly rotation). With IK, the first messages sent on it without a one-time prekey | The retention window |
 | A one-time prekey | Nothing once it is deleted after its first message | — |
 | The whole device | Everything | Both identity keys share one storage class |
