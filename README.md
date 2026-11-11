@@ -84,6 +84,7 @@ const { plaintext: received } = ratchetDecrypt({ state: bobState, header, cipher
 - **Serialization**: `serializeRatchetStateV2`, `deserializeRatchetStateV2`, `serializePersistedSessionV2`, `deserializePersistedSessionV2`
 - **Keys and trust**: `X3DHPrekeyManagerV2`, `IdentityRegistry` (`check`, `assertOrPin`, `approveRotation`)
 - **Session ids**: `deriveDirectionScopedSessionIdV1`
+- **Device proof and pairing code** (SPEC §4.5): `buildDeviceProofMessage`, `verifyDeviceProof`, `deviceCode`, `X3DHPrekeyManagerV2.signDeviceProof`
 
 ### Seals and primitives
 - `sealDeliveryV2`, `openDeliveryV2`, `sealLocalV2`, `openLocalV2`, `buildSelfSealAadV2`, `sealAttachmentV1`, `openAttachmentV1`

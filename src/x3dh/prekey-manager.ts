@@ -4,6 +4,7 @@ import { generateX25519Keypair } from "../crypto/x25519.js";
 import { generateEd25519Keypair, ed25519Sign } from "../crypto/ed25519.js";
 import { bytesToBase64, decodeStrictBase64 } from "../encoding/base64.js";
 import { buildOpkBatchSigMessage, buildSpkSigMessage } from "../crypto/x3dh.js";
+import { buildDeviceProofMessage, type DeviceProofFields } from "../crypto/device-proof.js";
 import { assertCanonicalDeviceId, isCanonicalDeviceId } from "../crypto/device-id.js";
 import { UnknownPrekeyError } from "../errors.js";
 
@@ -386,5 +387,15 @@ export class X3DHPrekeyManagerV2 {
       prekeys: prekeys.map((p) => ({ opk_id: p.opk_id, pub_b64: bytesToBase64(p.pub32) })),
       batch_sig_b64: bytesToBase64(ed25519Sign(this.ik_sig.priv32, message)),
     };
+  }
+
+  /**
+   * Signs a device proof (SPEC §4.5) with this device as the acting device, so the
+   * signing key never leaves the manager. Returns the 64-byte signature in base64.
+   * Refuses fields outside the spec as `buildDeviceProofMessage` does.
+   */
+  signDeviceProof(fields: Omit<DeviceProofFields, "acting_device_id">): string {
+    const message = buildDeviceProofMessage({ ...fields, acting_device_id: this.recipient_device_id });
+    return bytesToBase64(ed25519Sign(this.ik_sig.priv32, message));
   }
 }

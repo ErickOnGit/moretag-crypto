@@ -79,7 +79,7 @@ must be different devices (`self_session`) [deviation: a host rule].
 
 Each device holds IK (X25519) and IKsig (Ed25519, RFC 8032), signed prekeys
 (X25519, id 1..2^31−1) and one-time prekeys (X25519, id 1..2^31−1). IKsig signs
-two messages, each a CBOR array that begins with its own domain string, so a
+three messages, each a CBOR array that begins with its own domain string, so a
 signature for one purpose never verifies for another (the library's
 signing-domain test checks this):
 
@@ -89,8 +89,7 @@ signing-domain test checks this):
 - **One-time prekey batch**: `["moretag/x3dh/opk-batch/v1", device_id, [[opk_id, key (bstr 32)], …]]`
   in the order sent. The server verifies it with the device's stored IKsig before
   storing a batch. Golden bytes: `vectors/opk-batch-sig-msg-v1.json`.
-
-A planned device proof (`moretag/device-proof/v1`) follows the same rule.
+- **Device proof**: `["moretag/device-proof/v1", action, acting_device_id, …]` (§4.5).
 
 ### 4.2 Key agreement
 
@@ -146,6 +145,78 @@ successful decrypt binds every security-relevant sidecar field: EK, `spk_id` and
 fresh DHs before it ever sends. So two bootstraps from one setup (a replayed first
 message, two tabs) reply with different ratchet keys and ciphertexts. A test
 checks this.
+
+### 4.5 Device proof and pairing code
+
+The host's device actions use them: approving, removing and resetting a device,
+and re-registering an existing one (moreTag's devices design, DS3 and DS4). The
+library builds, signs and verifies. The server decides which device may act, from
+which session, and what the action does.
+
+**Device proof.** Ed25519 by the acting device's IKsig over the CBOR array
+
+```
+["moretag/device-proof/v1", action, acting_device_id, session_id, issued_at_s,
+ target_device_id, target_ik_sig_pub]
+```
+
+| Field | CBOR | Rule |
+|---|---|---|
+| `action` | text | `approve`, `remove`, `reset` or `refresh` |
+| `acting_device_id` | text | canonical UUID (§3): the signer's own device |
+| `session_id` | text | canonical UUID: the `session_id` claim of the caller's JWT |
+| `issued_at_s` | uint | Unix time in seconds, a safe integer ≥ 0 |
+| `target_device_id` | text | `approve`, `remove`: a canonical UUID, for `approve` another device than the acting one; `reset`, `refresh`: `""` |
+| `target_ik_sig_pub` | bstr | `approve`: the target's IKsig, 32 bytes; every other action: empty (0 bytes) |
+
+Shortest-form CBOR, byte strings untagged (§2). Any other input refuses to build:
+a device id that is not canonical is `invalid_device_id`; an unknown action, a
+session id that is not a canonical UUID, a time that is not a safe integer ≥ 0, a
+missing or extra target, an approval of the acting device itself, or a target key
+of the wrong length is a `TypeError`. `""` and an empty key are the absent values:
+given where no target belongs, they build the same bytes as leaving them out;
+given where one belongs, they are a missing target. `X3DHPrekeyManagerV2.signDeviceProof` signs
+with the manager's own device as the acting device, so the key never leaves it.
+
+**Verification** (`verifyDeviceProof`) rebuilds the message from the verifier's
+own fields, never the request's: the session id from the verified JWT, approve's
+target key as stored for the target. Fields that refuse to build, an acting key
+that is not 32 bytes and a `now_s` that is not a safe integer ≥ 0 throw a
+`TypeError`. Then, in this order:
+
+1. An acting key that is not a canonical encoding of a point outside the
+   small-order subgroup is `bad_signature`: under a small-order key a ZIP-215
+   verifier accepts a forged signature on any message.
+2. A signature that is not 64 bytes or does not verify under the acting device's
+   stored IKsig is `bad_signature`.
+3. `|now_s − issued_at_s| > 300` is `expired`: 300 seconds either way passes, 301
+   fails. `now_s` is the verifier's clock in whole seconds.
+
+So `expired` is said only of an authentic proof. A proof binds one action, one
+acting device, one session, one target (for `approve`, that target's key too) and
+601 seconds (300 either side of `issued_at_s`). It carries no nonce: a replay inside the span repeats an
+action, which the server makes idempotent. That rests on host rules: a removed
+device id never returns, and a session resets at most once. A `refresh` proof
+vouches only for the device's presence; the keys it re-registers carry their own
+signatures (§4.1).
+
+**Pairing code.** For a device's IKsig:
+
+```
+code = uint32_be(SHA-256(UTF-8("moretag/device-code/v1") || IKsig)[0..4]) mod 10^6
+```
+
+written as six ASCII digits with leading zeros (`"048213"`); a view may group it
+as `"048 213"`. The new device shows it and the user types it on the approving
+device. It is a comparison value, not a secret: anyone who can list the pending
+devices can compute it, and about 10^6 key draws give a key with a chosen code in
+seconds. So the code only selects. The host refuses an approval whose code matches
+more than one pending device, and the proof signs the selected device's whole key
+(`target_ik_sig_pub`). After such a tie the user cannot tell the two apart by the
+code, so the host must have both removed and the new device set up again, never
+one removed and the code retried: if the user removed the real one, the code would
+then select the other. The modulo bias (the 967,296 codes below 2^32 mod 10^6
+are 1 in 4,294 likelier) is negligible.
 
 ## 5. Associated data
 
@@ -559,6 +630,14 @@ at the primitive level (RFC and draft vectors in `vectors/primitives.json`).
   The files' JSON field names, role names and skipped-key layout are the author's
   own; the tests map them. Only the bytes that enter a KDF, a signature or an AEAD
   are normative.
+- `vectors/device-proof-v1.json`, `vectors/device-code-v1.json` (§4.5): written
+  by `scripts/gen-vectors-device-v1.mjs`, by a second author who worked from §2,
+  §3 and §4.5 and the public texts only, with its own CBOR encoder, node:crypto's
+  Ed25519 and SHA-256, and the same three imports; `vectors:check` runs it too.
+  Its readings of §4.5 are in its `PARAMS.readings`. The server's mirror must
+  reproduce every valid case's message and signature and every verdict, the
+  small-order keys' `bad_signature` included (WebCrypto's Ed25519 is not ZIP-215,
+  but the mirror checks the key itself).
 - `vectors/spk-sig-msg-v1.json`: the library's v1 golden file for the
   signed-prekey message, unchanged.
 - `vectors/opk-batch-sig-msg-v1.json`: the one-time prekey batch message and

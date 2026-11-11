@@ -1,0 +1,148 @@
+{
+  "about": "Pairing code vectors, docs/SPEC.md §4.5: code = uint32_be(SHA-256(UTF-8(\"moretag/device-code/v1\") || IKsig)[0..4]) mod 10^6, written as six ASCII digits with leading zeros. digest_prefix_hex is the first 4 bytes of the SHA-256. Keys are Ed25519 public keys of the given seeds (seed = SHA-256(UTF-8(\"moretag-crypto/vectors/device/v1/\" || label))). Written independently by scripts/gen-vectors-device-v1.mjs from the spec and public texts only.",
+  "domain": "moretag/device-code/v1",
+  "cases": [
+    {
+      "name": "rfc8032_7_1_test1",
+      "ik_sig_seed_hex": "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+      "ik_sig_public_hex": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+      "digest_prefix_hex": "02874b56",
+      "uint32": 42421078,
+      "code": "421078"
+    },
+    {
+      "name": "ordinary_1",
+      "label": "code/key/1",
+      "ik_sig_seed_hex": "0a74b7b7fad290987a08bfecbc9c241e6fde5eadf7b866beb4df29c333b71530",
+      "ik_sig_public_hex": "c846dd6cb80e905cb1ec2a8e7ccb0dda879aafd55cdb4ad3725450de9bb635d4",
+      "digest_prefix_hex": "343112f9",
+      "uint32": 875631353,
+      "code": "631353"
+    },
+    {
+      "name": "ordinary_2",
+      "label": "code/key/2",
+      "ik_sig_seed_hex": "56cf0c16b3f4da1ad8935ee1a023b9713b6a97f74e892d75d3532ad89f06514f",
+      "ik_sig_public_hex": "4079e8055a0aa60b48927dcb6696e22b87e3369084726598faeb48a62f8b8558",
+      "digest_prefix_hex": "881c579f",
+      "uint32": 2283558815,
+      "code": "558815"
+    },
+    {
+      "name": "ordinary_3",
+      "label": "code/key/3",
+      "ik_sig_seed_hex": "227bc94838ef1550f9709e22fb44dbca225cf796ef9d56143efe12c19f04a6a1",
+      "ik_sig_public_hex": "8e8a138d82ed1dab45d0a757a58e54caf0d5d41786e597fc53fd3adeccd0bce5",
+      "digest_prefix_hex": "658c4ec0",
+      "uint32": 1703694016,
+      "code": "694016"
+    },
+    {
+      "name": "ordinary_4",
+      "label": "code/key/4",
+      "ik_sig_seed_hex": "ee2e66f54ec20844d9ad653a3f9ffee0546275dd4b514a6d6b6c7d2e2a27937d",
+      "ik_sig_public_hex": "9d3b9a904924f242d47c7be88f679de2049e2b91b7b1706f6776091ca2474c14",
+      "digest_prefix_hex": "b7a7e9e6",
+      "uint32": 3081234918,
+      "code": "234918"
+    },
+    {
+      "name": "ordinary_5",
+      "label": "code/key/5",
+      "ik_sig_seed_hex": "cb6ce092f797c078c6121e05ea0f48386bec191be86a46a15cfe6cde41103a83",
+      "ik_sig_public_hex": "988a213de4c122144087d294d39f1a17dd8ec039033201ed442b49ae3e956267",
+      "digest_prefix_hex": "f6598e8d",
+      "uint32": 4133064333,
+      "code": "064333"
+    },
+    {
+      "name": "ordinary_6",
+      "label": "code/key/6",
+      "ik_sig_seed_hex": "23e2058dc88ea21aa3c1aabc6f036a8538db01df473c0de5405e2cdd38babcbf",
+      "ik_sig_public_hex": "1645e452ad6d83539a62a83d666dba8eab11d3bbcddea61028f7066b0d6583a1",
+      "digest_prefix_hex": "0ab3320e",
+      "uint32": 179515918,
+      "code": "515918"
+    },
+    {
+      "name": "ordinary_7",
+      "label": "code/key/7",
+      "ik_sig_seed_hex": "ffc67618fa53c1a6c0c4973c84c13a285bae71667993df3ba5c9b428b423833e",
+      "ik_sig_public_hex": "9f773f0dc3ad3c4e756fa715b912dfafc62d32b2a664c1358363701fe6361741",
+      "digest_prefix_hex": "ffacab13",
+      "uint32": 4289506067,
+      "code": "506067"
+    },
+    {
+      "name": "ordinary_8",
+      "label": "code/key/8",
+      "ik_sig_seed_hex": "a7d71ff88824d7e8e2db59466cfaf5694191897612fa6955638e274e4282a2a4",
+      "ik_sig_public_hex": "63d35ac877708368f57b96f77bf6f658706b55f14c7602d67991548d4c486fd2",
+      "digest_prefix_hex": "68b2b67e",
+      "uint32": 1756542590,
+      "code": "542590"
+    },
+    {
+      "name": "leading_zero_below_100000",
+      "label": "code/search/16",
+      "ik_sig_seed_hex": "9544e9ca41853f4d7f44bb50ef3a891d285b5aaf5fd09e874dc2baed66da935d",
+      "note": "first code/search/<n> with a code in [1000, 100000)",
+      "ik_sig_public_hex": "dce0e51d82d52b8acdadceb7dc00cad32fa88b0ad2500b02bbd80b28179ff498",
+      "digest_prefix_hex": "97a301e9",
+      "uint32": 2544042473,
+      "code": "042473"
+    },
+    {
+      "name": "below_1000",
+      "label": "code/search/1056",
+      "ik_sig_seed_hex": "19f91e9c2382bf813986a67b069cdbb6554056039a23bf25e2d0992db6fa317a",
+      "note": "first code/search/<n> with a code below 1000",
+      "ik_sig_public_hex": "590d654eeab8e1e30dc6ed2c9956043e6d869a3b1ee044ec72209713956ec135",
+      "digest_prefix_hex": "9150f0ce",
+      "uint32": 2438000846,
+      "code": "000846"
+    },
+    {
+      "name": "last_partial_block",
+      "label": "code/search/2428",
+      "ik_sig_seed_hex": "eb113003a21380dc30855fedf1b808a58060cf0fa5a6fb893d0b74a0698e89a4",
+      "note": "first code/search/<n> with uint32 >= 4294000000 (the last, partial block of the modulo)",
+      "ik_sig_public_hex": "b60fc3c3853a5294637bfede9553e91f49ca83c0a2f7b85a54e845898973e6c1",
+      "digest_prefix_hex": "fff77ed0",
+      "uint32": 4294409936,
+      "code": "409936"
+    },
+    {
+      "name": "collision_a",
+      "label": "code/search/741",
+      "ik_sig_seed_hex": "ec63364d6fed0854f5fc64984bdfa1c0cc4e2bfce0138086d7b9ee3a2639e54b",
+      "note": "first pair of code/search/<n> keys with the same code (a)",
+      "ik_sig_public_hex": "e410c3fff7208708f7b721920876b27bfc9fbf54d0dd87e43b8b4b612ab5b9b1",
+      "digest_prefix_hex": "80f86b03",
+      "uint32": 2163763971,
+      "code": "763971"
+    },
+    {
+      "name": "collision_b",
+      "label": "code/search/1225",
+      "ik_sig_seed_hex": "902285f9839943d42cbf2733b649047f2a9ddbaad9d9ccd5421dd337d0396ed1",
+      "note": "first pair of code/search/<n> keys with the same code (b)",
+      "ik_sig_public_hex": "a2851626667e6233e86716bab3dc3220a2a9733eb2ba95acdc925ba5a17e5ebd",
+      "digest_prefix_hex": "821a55c3",
+      "uint32": 2182763971,
+      "code": "763971"
+    }
+  ],
+  "refusals": [
+    {
+      "name": "key_31_bytes",
+      "ik_sig_public_hex": "c846dd6cb80e905cb1ec2a8e7ccb0dda879aafd55cdb4ad3725450de9bb635",
+      "expect": "type_error"
+    },
+    {
+      "name": "key_33_bytes",
+      "ik_sig_public_hex": "c846dd6cb80e905cb1ec2a8e7ccb0dda879aafd55cdb4ad3725450de9bb635d400",
+      "expect": "type_error"
+    }
+  ]
+}
